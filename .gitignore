@@ -12,9 +12,13 @@ wheels/
 # Logs
 logs/
 *.log
+outputs/
 
 # Data
 data/
 
 # MacOS
 .DS_Store
+
+# Secrets
+.env

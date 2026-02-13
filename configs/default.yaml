@@ -1,0 +1,6 @@
+defaults:
+  - provider: local
+  - model: qwen3_4b_thinking
+  - _self_
+
+prompt: "Explain transformers in 2 sentences."
