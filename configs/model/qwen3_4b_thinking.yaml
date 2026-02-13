@@ -2,5 +2,4 @@ names:
   ollama: qwen3:4b-thinking-2507-q4_K_M
   mlx: lmstudio-community/Qwen3-4B-Thinking-2507-MLX-4bit
 
-# If provider.id is not in names, resolves to null as requested.
-name: ${oc.select:model.names.${provider.id},null}
+name: ${oc.select:model.names.${hydra:runtime.choices.provider},null}
