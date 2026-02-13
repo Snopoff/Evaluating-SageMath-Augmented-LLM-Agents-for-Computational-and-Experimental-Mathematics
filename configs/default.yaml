@@ -1,5 +1,5 @@
 defaults:
-  - provider: local
+  - provider: ollama
   - model: qwen3_4b_thinking
   - _self_
 

@@ -1,3 +1,4 @@
+id: openai
 client:
   _target_: openai.OpenAI
   api_key: ${oc.env:OPENAI_API_KEY}
