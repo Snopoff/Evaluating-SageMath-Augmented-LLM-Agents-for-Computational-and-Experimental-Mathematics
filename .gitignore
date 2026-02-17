@@ -22,3 +22,6 @@ data/
 
 # Secrets
 .env
+
+# temp and draft files
+drafts/
