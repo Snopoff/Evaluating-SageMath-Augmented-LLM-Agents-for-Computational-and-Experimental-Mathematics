@@ -23,5 +23,6 @@ data/
 # Secrets
 .env
 
-# temp and draft files
+# temp and draft files (and prompts temporarily too)
 drafts/
+prompts/

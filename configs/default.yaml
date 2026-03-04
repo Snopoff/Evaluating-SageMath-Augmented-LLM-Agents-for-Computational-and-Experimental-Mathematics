@@ -1,6 +1,12 @@
 defaults:
-  - provider: ollama
-  - model: qwen3_4b_thinking
+  - provider: openai
+  - model: openai
+  - controller: cas_discovery #default
+  - mcp: research #default
+  - benchmark: default
   - _self_
 
+mode: chat
+progress_logs: true
 prompt: "Explain transformers in 2 sentences."
+prompt_file: null

@@ -10,6 +10,7 @@ dependencies = [
     "mlx-lm>=0.30.6",
     "openai>=2.20.0",
     "pyarrow",
+    "rootutils>=1.0.7",
 ]
 
 [dependency-groups]

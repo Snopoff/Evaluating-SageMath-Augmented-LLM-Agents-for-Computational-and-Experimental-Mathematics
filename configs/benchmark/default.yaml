@@ -1,0 +1,10 @@
+dataset_path: data/processed/realmathbenchmark_qa.jsonl
+output_dir: .
+limit: 25
+progress_logs: true
+question_field: question
+answer_field: answer
+id_field: id
+predictions_file: predictions.jsonl
+tool_traces_file: tool_traces.jsonl
+metrics_file: metrics.json
