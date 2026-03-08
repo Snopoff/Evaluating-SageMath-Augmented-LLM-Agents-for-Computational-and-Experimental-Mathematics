@@ -1,7 +1,8 @@
-"""Core package for LLMxM2 tool-augmented evaluation."""
+"""Minimal LLM + CAS research package."""
 
 __all__ = [
     "agent",
     "benchmark",
-    "mcp",
+    "sage",
+    "tools",
 ]

@@ -28,18 +28,6 @@ class _FakeController:
         )
 
 
-class _FakeToolClient:
-    def sage_eval(self, payload: dict[str, object]) -> dict[str, object]:  # noqa: ARG002
-        return {
-            "status": "error",
-            "result_plain": "",
-            "result_latex": "",
-            "runtime_ms": 0,
-            "error_code": "EXEC_ERROR",
-            "complexity_report": {"features": {}, "policy_decision": "deny", "reason": "n/a"},
-        }
-
-
 class BenchmarkRunnerTests(unittest.TestCase):
     def test_smoke_writes_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -67,7 +55,6 @@ class BenchmarkRunnerTests(unittest.TestCase):
             )
             runner = RealMathBenchmarkRunner(
                 controller=_FakeController("4"),
-                tool_client=_FakeToolClient(),
                 config=config,
             )
 

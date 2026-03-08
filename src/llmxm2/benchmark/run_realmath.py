@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import ast
 import json
 import re
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from src.llmxm2.agent.controller import AgentController
-from src.llmxm2.mcp.client import SageToolClient
+from llmxm2.agent.controller import AgentController
+from llmxm2.sage.runtime import SageRuntime
 
 _LATEX_WRAPPERS = [
     (r"\\[", ""),
@@ -35,22 +33,24 @@ class BenchmarkConfig:
     predictions_file: str = "predictions.jsonl"
     tool_traces_file: str = "tool_traces.jsonl"
     metrics_file: str = "metrics.json"
+    symbolic_timeout_sec: float = 8.0
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], dataset_path: Path) -> "BenchmarkConfig":
-        cfg = dict(cfg)
-        output_dir = Path(str(cfg.get("output_dir", ".")))
+        cfg_dict = dict(cfg)
+        output_dir = Path(str(cfg_dict.get("output_dir", ".")))
         return cls(
             dataset_path=dataset_path,
             output_dir=output_dir,
-            limit=int(cfg.get("limit", 25)),
-            progress_logs=bool(cfg.get("progress_logs", False)),
-            question_field=str(cfg.get("question_field", "question")),
-            answer_field=str(cfg.get("answer_field", "answer")),
-            id_field=str(cfg.get("id_field", "id")),
-            predictions_file=str(cfg.get("predictions_file", "predictions.jsonl")),
-            tool_traces_file=str(cfg.get("tool_traces_file", "tool_traces.jsonl")),
-            metrics_file=str(cfg.get("metrics_file", "metrics.json")),
+            limit=int(cfg_dict.get("limit", 25)),
+            progress_logs=bool(cfg_dict.get("progress_logs", False)),
+            question_field=str(cfg_dict.get("question_field", "question")),
+            answer_field=str(cfg_dict.get("answer_field", "answer")),
+            id_field=str(cfg_dict.get("id_field", "id")),
+            predictions_file=str(cfg_dict.get("predictions_file", "predictions.jsonl")),
+            tool_traces_file=str(cfg_dict.get("tool_traces_file", "tool_traces.jsonl")),
+            metrics_file=str(cfg_dict.get("metrics_file", "metrics.json")),
+            symbolic_timeout_sec=float(cfg_dict.get("symbolic_timeout_sec", 8.0)),
         )
 
 
@@ -63,15 +63,19 @@ class ScoreResult:
 
 
 class RealMathBenchmarkRunner:
-    def __init__(self, controller: AgentController, tool_client: SageToolClient, config: BenchmarkConfig):
+    def __init__(
+        self,
+        controller: AgentController,
+        config: BenchmarkConfig,
+        sage_runtime: SageRuntime | None = None,
+    ):
         self.controller = controller
-        self.tool_client = tool_client
         self.config = config
+        self.sage_runtime = sage_runtime
 
     def run(self) -> dict[str, Any]:
-        self._progress("loading dataset rows")
         rows = list(self._iter_rows(self.config.dataset_path, self.config.limit))
-        self._progress(f"loaded rows: {len(rows)}")
+        self._progress(f"loaded rows={len(rows)}")
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
 
         predictions_path = self.config.output_dir / self.config.predictions_file
@@ -92,7 +96,6 @@ class RealMathBenchmarkRunner:
                 question = str(row.get(self.config.question_field, ""))
                 reference_answer = str(row.get(self.config.answer_field, ""))
 
-                self._progress(f"solving problem {total + 1}/{len(rows)} id={problem_id}")
                 solve_result = self.controller.solve(question)
                 score = self._score_prediction(solve_result.final_answer, reference_answer)
 
@@ -101,34 +104,43 @@ class RealMathBenchmarkRunner:
                     correct += 1
                     if score.match_type == "exact":
                         exact_correct += 1
-                    elif score.match_type == "symbolic":
+                    if score.match_type == "symbolic":
                         symbolic_correct += 1
 
-                prediction_record = {
-                    "id": problem_id,
-                    "question": question,
-                    "reference_answer": reference_answer,
-                    "predicted_answer": solve_result.final_answer,
-                    "normalized_prediction": score.normalized_prediction,
-                    "normalized_reference": score.normalized_reference,
-                    "correct": score.correct,
-                    "match_type": score.match_type,
-                    "tool_calls": len(solve_result.tool_traces),
-                    "turn_count": solve_result.turn_count,
-                    "stop_reason": solve_result.stop_reason,
-                }
-                pred_handle.write(json.dumps(prediction_record, ensure_ascii=False) + "\n")
+                pred_handle.write(
+                    json.dumps(
+                        {
+                            "id": problem_id,
+                            "question": question,
+                            "reference_answer": reference_answer,
+                            "predicted_answer": solve_result.final_answer,
+                            "normalized_prediction": score.normalized_prediction,
+                            "normalized_reference": score.normalized_reference,
+                            "correct": score.correct,
+                            "match_type": score.match_type,
+                            "tool_calls": len(solve_result.tool_traces),
+                            "turn_count": solve_result.turn_count,
+                            "stop_reason": solve_result.stop_reason,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
 
-                trace_record = {
-                    "id": problem_id,
-                    "tool_traces": solve_result.tool_traces,
-                }
-                trace_handle.write(json.dumps(trace_record, ensure_ascii=False) + "\n")
-                self._progress(f"completed id={problem_id} (correct={score.correct}, tool_calls={len(solve_result.tool_traces)})")
+                trace_handle.write(
+                    json.dumps(
+                        {
+                            "id": problem_id,
+                            "tool_traces": solve_result.tool_traces,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
 
         metrics = {
             "rows": total,
-            "accuracy": round((correct / total), 6) if total else 0.0,
+            "accuracy": round(correct / total, 6) if total else 0.0,
             "correct": correct,
             "incorrect": total - correct,
             "exact_correct": exact_correct,
@@ -141,7 +153,6 @@ class RealMathBenchmarkRunner:
         with metrics_path.open("w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, ensure_ascii=False)
 
-        self._progress(f"metrics written to {metrics_path}")
         return metrics
 
     def _progress(self, message: str) -> None:
@@ -173,9 +184,8 @@ class RealMathBenchmarkRunner:
                 normalized_reference=norm_reference,
             )
 
-        if self._looks_symbolic(norm_prediction) and self._looks_symbolic(norm_reference):
-            equivalent = self._symbolic_equivalent(norm_prediction, norm_reference)
-            if equivalent:
+        if self.sage_runtime and self._looks_symbolic(norm_prediction) and self._looks_symbolic(norm_reference):
+            if self._symbolic_equivalent(norm_prediction, norm_reference):
                 return ScoreResult(
                     correct=True,
                     match_type="symbolic",
@@ -191,38 +201,25 @@ class RealMathBenchmarkRunner:
         )
 
     def _symbolic_equivalent(self, lhs: str, rhs: str) -> bool:
+        if self.sage_runtime is None:
+            return False
+
         lhs_expr = self._equation_to_expression(lhs)
         rhs_expr = self._equation_to_expression(rhs)
-        check_expr = f"(({lhs_expr})-({rhs_expr}))"
-        check_expr_literal = json.dumps(check_expr)
         snippet = (
-            f"expr = SR({check_expr_literal})\n"
+            f"expr = SR((({lhs_expr})-({rhs_expr})))\n"
             "RESULT = bool(expr.simplify_full() == 0)"
         )
 
-        payload = {
-            "operation": "sage_snippet",
-            "args": {"code": snippet, "result_var": "RESULT"},
-            "assumptions": {"domain": "QQ", "symbols": []},
-            "request_id": str(uuid.uuid4()),
-            "budget_profile": "conservative",
-        }
-        response = self.tool_client.sage_eval(payload)
-        if response.get("status") != "ok":
+        result = self.sage_runtime.execute_sage_code(
+            code=snippet,
+            result_var="RESULT",
+            timeout_sec=self.config.symbolic_timeout_sec,
+        )
+        if result.status != "ok":
             return False
 
-        plain = str(response.get("result_plain", ""))
-        result_repr = ""
-        try:
-            parsed = ast.literal_eval(plain)
-            if isinstance(parsed, dict):
-                result_repr = str(parsed.get("result_repr", ""))
-        except (ValueError, SyntaxError):
-            result_repr = ""
-
-        if result_repr:
-            return normalize_answer(result_repr).lower() in {"true", "1"}
-        return normalize_answer(plain).lower() in {"true", "1"}
+        return normalize_answer(result.result_plain).lower() in {"true", "1"}
 
     @staticmethod
     def _looks_symbolic(value: str) -> bool:
@@ -252,5 +249,6 @@ def normalize_answer(value: str) -> str:
     text = text.replace("\n", " ").replace("\t", " ")
     text = re.sub(r"\s+", " ", text)
     text = text.strip()
-    text = text.removeprefix("[").removesuffix("]") if text.startswith("[") and text.endswith("]") else text
+    if text.startswith("[") and text.endswith("]"):
+        text = text.removeprefix("[").removesuffix("]")
     return text

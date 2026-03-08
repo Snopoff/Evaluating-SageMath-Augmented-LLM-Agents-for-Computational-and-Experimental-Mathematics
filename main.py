@@ -1,18 +1,22 @@
+from __future__ import annotations
+
 import json
 import logging
-import rootutils
 from pathlib import Path
+from typing import Any
 
 import hydra
+import rootutils
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.llmxm2.agent.controller import AgentController, ControllerConfig
-from src.llmxm2.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
-from src.llmxm2.mcp.client import InProcessSageToolClient
-from src.llmxm2.mcp.sage_server import SageMCPService, run_mcp_server
+from llmxm2.agent.controller import AgentController, ControllerConfig
+from llmxm2.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
+from llmxm2.sage.runtime import SageRuntime
+from llmxm2.tools.registry import ToolRegistry
+from llmxm2.tools.types import ToolResult
 
 
 def _setup_logging() -> None:
@@ -27,6 +31,62 @@ def _progress(enabled: bool, message: str) -> None:
         print(f"[progress] {message}", flush=True)
 
 
+def _build_tool_registry(runtime: SageRuntime) -> ToolRegistry:
+    registry = ToolRegistry()
+
+    def sage_exec(arguments: dict[str, Any]) -> ToolResult:
+        code = arguments.get("code")
+        if not isinstance(code, str) or not code.strip():
+            return ToolResult(ok=False, content="sage_exec requires 'code' as a non-empty string")
+
+        result_var = arguments.get("result_var", "RESULT")
+        if not isinstance(result_var, str) or not result_var.strip():
+            result_var = "RESULT"
+
+        timeout = arguments.get("timeout_sec")
+        timeout_sec: float | None = float(timeout) if isinstance(timeout, (int, float)) else None
+
+        result = runtime.execute_sage_code(
+            code=code,
+            result_var=result_var,
+            timeout_sec=timeout_sec,
+        )
+
+        content = result.result_plain
+        if not content and result.stdout.strip():
+            content = result.stdout.strip()
+        if result.status != "ok":
+            content = result.error or result.stderr.strip() or "Sage execution failed"
+
+        return ToolResult(
+            ok=result.status == "ok",
+            content=content,
+            metadata={
+                "status": result.status,
+                "runtime_ms": result.runtime_ms,
+                "stderr": result.stderr,
+                "result_latex": result.result_latex,
+            },
+        )
+
+    registry.register(
+        name="sage_exec",
+        schema={
+            "type": "object",
+            "properties": {
+                "code": {"type": "string"},
+                "result_var": {"type": "string"},
+                "timeout_sec": {"type": "number"},
+            },
+            "required": ["code"],
+        },
+        handler=sage_exec,
+        description="Execute raw Sage code inside Docker.",
+    )
+
+    return registry
+
+
 @hydra.main(version_base=None, config_path="configs", config_name="default")
 def main(cfg: DictConfig) -> None:
     _setup_logging()
@@ -35,40 +95,27 @@ def main(cfg: DictConfig) -> None:
     progress_logs = bool(cfg.get("progress_logs", True))
     _progress(progress_logs, f"starting main (mode={mode})")
 
-    #! `from_config` -> `hu.instantiate`
-    # * ======
-    mcp_cfg = OmegaConf.to_container(cfg.mcp, resolve=True)
-    if not isinstance(mcp_cfg, dict):
-        raise ValueError("Config 'mcp' must be a mapping.")
-
-    mcp_cfg.setdefault("progress_logs", progress_logs)
-    _progress(progress_logs, "initializing Sage MCP service")
-    service = SageMCPService.from_config(mcp_cfg)
-    _progress(progress_logs, "Sage MCP service ready")
-    # * ======
-
-    if mode == "serve_mcp":
-        transport = str(cfg.mcp.server.transport)
-        _progress(progress_logs, f"serving MCP over transport={transport}")
-        run_mcp_server(service, transport=transport)
-        return
-
-    _progress(progress_logs, "initializing model client")
+    # Keep provider construction Hydra-driven.
     client = instantiate(cfg.provider.client)
 
-    #! `from_config` -> `hu.instantiate`
-    # * ======
-    controller_cfg = ControllerConfig.from_config(OmegaConf.to_container(cfg.controller, resolve=True))
-    tool_client = InProcessSageToolClient(service=service)
+    sage_cfg = OmegaConf.to_container(cfg.sage, resolve=True)
+    if not isinstance(sage_cfg, dict):
+        raise ValueError("Config 'sage' must be a mapping.")
+
+    sage_cfg.setdefault("progress_logs", progress_logs)
+    runtime = SageRuntime.from_config(sage_cfg)
+    tools = _build_tool_registry(runtime)
+
+    controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
+    if not isinstance(controller_cfg, dict):
+        raise ValueError("Config 'controller' must be a mapping.")
 
     controller = AgentController(
         client=client,
         model_name=str(cfg.model.name),
-        tool_client=tool_client,
-        config=controller_cfg,
+        tool_registry=tools,
+        config=ControllerConfig.from_config(controller_cfg),
     )
-    _progress(progress_logs, f"controller ready (model={cfg.model.name})")
-    # * ======
 
     if mode == "chat":
         prompt = str(cfg.get("prompt", ""))
@@ -77,33 +124,25 @@ def main(cfg: DictConfig) -> None:
             prompt_path = Path(to_absolute_path(str(prompt_file)))
             _progress(progress_logs, f"loading prompt from file: {prompt_path}")
             prompt = prompt_path.read_text(encoding="utf-8").strip()
-        _progress(progress_logs, f"starting chat solve (prompt_chars={len(prompt)})")
+
         result = controller.solve(prompt)
-        _progress(
-            progress_logs,
-            f"chat solve completed (stop_reason={result.stop_reason}, turns={result.turn_count})",
-        )
+        _progress(progress_logs, f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
         print(result.final_answer)
         return
 
     if mode == "benchmark":
-        bench_cfg_raw = OmegaConf.to_container(cfg.benchmark, resolve=True)
-        if not isinstance(bench_cfg_raw, dict):
+        bench_cfg = OmegaConf.to_container(cfg.benchmark, resolve=True)
+        if not isinstance(bench_cfg, dict):
             raise ValueError("Config 'benchmark' must be a mapping.")
 
         dataset_path = Path(to_absolute_path(str(cfg.benchmark.dataset_path)))
-        benchmark_cfg = BenchmarkConfig.from_config(bench_cfg_raw, dataset_path=dataset_path)
-        _progress(
-            progress_logs,
-            f"starting benchmark (dataset={dataset_path}, limit={benchmark_cfg.limit})",
-        )
-        runner = RealMathBenchmarkRunner(controller=controller, tool_client=tool_client, config=benchmark_cfg)
+        benchmark_cfg = BenchmarkConfig.from_config(bench_cfg, dataset_path=dataset_path)
+        runner = RealMathBenchmarkRunner(controller=controller, config=benchmark_cfg, sage_runtime=runtime)
         metrics = runner.run()
-        _progress(progress_logs, "benchmark completed")
         print(json.dumps(metrics, indent=2, ensure_ascii=False))
         return
 
-    raise ValueError(f"Unsupported mode: {mode!r}")
+    raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat' or 'benchmark'.")
 
 
 if __name__ == "__main__":

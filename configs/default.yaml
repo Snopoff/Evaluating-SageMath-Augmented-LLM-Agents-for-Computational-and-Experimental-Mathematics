@@ -1,8 +1,8 @@
 defaults:
   - provider: openai
   - model: openai
-  - controller: cas_discovery #default
-  - mcp: research #default
+  - controller: default
+  - sage: default
   - benchmark: default
   - _self_
 
