@@ -6,13 +6,12 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from llmxm2.agent.controller import AgentController, ControllerConfig
-from llmxm2.tools.registry import ToolRegistry
-from llmxm2.tools.types import ToolResult
+from src.agent.controller import AgentController, ControllerConfig
+from src.tools.registry import ToolRegistry
+from src.tools.types import ToolDefinition, ToolResult, ToolSpec
 
 
 class _FakeCompletions:
@@ -49,7 +48,12 @@ class AgentControllerTests(unittest.TestCase):
             calls.append(args)
             return ToolResult(ok=True, content=str(args.get("value", "")))
 
-        registry.register(name="echo", schema={"type": "object"}, handler=_echo, description="Echo")
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="echo", description="Echo", input_schema={"type": "object"}),
+                handler=_echo,
+            )
+        )
 
         controller = AgentController(
             client=client,

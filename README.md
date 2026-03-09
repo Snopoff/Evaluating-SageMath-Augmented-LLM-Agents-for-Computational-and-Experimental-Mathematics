@@ -61,11 +61,23 @@ Model selection stays in Hydra config (`configs/model/*.yaml`).
 
 ## Tool Extension Point
 
-`main.py` registers one minimal tool by default:
+Tools are selected by Hydra name in `configs/default.yaml`:
+
+```yaml
+tools:
+  enabled:
+    - sage_exec
+```
+
+`src/tools/catalog.py` currently exposes one minimal built-in:
 
 - `sage_exec`: run raw Sage code in Docker (`code`, optional `result_var`, optional `timeout_sec`)
 
-Add your own tools in `_build_tool_registry(...)`.
+To add a new tool:
+
+1. Add a plain handler and `make_<tool>_tool(...)` factory in `src/tools/catalog.py`.
+2. Add the factory to `AVAILABLE_TOOLS`.
+3. Add the tool name to `tools.enabled`.
 
 ## Benchmark Outputs
 

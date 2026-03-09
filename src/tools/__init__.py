@@ -1,4 +1,4 @@
 from .registry import ToolRegistry
-from .types import ToolResult, ToolSpec
+from .types import ToolDefinition, ToolResult, ToolSpec
 
-__all__ = ["ToolRegistry", "ToolSpec", "ToolResult"]
+__all__ = ["ToolDefinition", "ToolRegistry", "ToolSpec", "ToolResult"]

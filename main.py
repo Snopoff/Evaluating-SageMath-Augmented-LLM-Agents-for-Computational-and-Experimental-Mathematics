@@ -1,7 +1,6 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 import hydra
 import rootutils
@@ -13,8 +12,8 @@ rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 from src.agent.controller import AgentController, ControllerConfig
 from src.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
 from src.sage.runtime import SageRuntime
+from src.tools.catalog import AVAILABLE_TOOLS
 from src.tools.registry import ToolRegistry
-from src.tools.types import ToolResult
 
 
 def _setup_logging() -> None:
@@ -27,62 +26,6 @@ def _setup_logging() -> None:
 def _progress(enabled: bool, message: str) -> None:
     if enabled:
         print(f"[progress] {message}", flush=True)
-
-
-def _build_tool_registry(runtime: SageRuntime) -> ToolRegistry:
-    registry = ToolRegistry()
-
-    def sage_exec(arguments: dict[str, Any]) -> ToolResult:
-        code = arguments.get("code")
-        if not isinstance(code, str) or not code.strip():
-            return ToolResult(ok=False, content="sage_exec requires 'code' as a non-empty string")
-
-        result_var = arguments.get("result_var", "RESULT")
-        if not isinstance(result_var, str) or not result_var.strip():
-            result_var = "RESULT"
-
-        timeout = arguments.get("timeout_sec")
-        timeout_sec: float | None = float(timeout) if isinstance(timeout, (int, float)) else None
-
-        result = runtime.execute_sage_code(
-            code=code,
-            result_var=result_var,
-            timeout_sec=timeout_sec,
-        )
-
-        content = result.result_plain
-        if not content and result.stdout.strip():
-            content = result.stdout.strip()
-        if result.status != "ok":
-            content = result.error or result.stderr.strip() or "Sage execution failed"
-
-        return ToolResult(
-            ok=result.status == "ok",
-            content=content,
-            metadata={
-                "status": result.status,
-                "runtime_ms": result.runtime_ms,
-                "stderr": result.stderr,
-                "result_latex": result.result_latex,
-            },
-        )
-
-    registry.register(
-        name="sage_exec",
-        schema={
-            "type": "object",
-            "properties": {
-                "code": {"type": "string"},
-                "result_var": {"type": "string"},
-                "timeout_sec": {"type": "number"},
-            },
-            "required": ["code"],
-        },
-        handler=sage_exec,
-        description="Execute raw Sage code inside Docker.",
-    )
-
-    return registry
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="default")
@@ -102,7 +45,23 @@ def main(cfg: DictConfig) -> None:
 
     sage_cfg.setdefault("progress_logs", progress_logs)
     runtime = SageRuntime.from_config(sage_cfg)
-    tools = _build_tool_registry(runtime)
+
+    tools_cfg = OmegaConf.to_container(cfg.tools, resolve=True)
+    if not isinstance(tools_cfg, dict):
+        raise ValueError("Config 'tools' must be a mapping.")
+
+    enabled_tools = tools_cfg.get("enabled", [])
+    if not isinstance(enabled_tools, list) or not all(isinstance(name, str) for name in enabled_tools):
+        raise ValueError("Config 'tools.enabled' must be a list of tool names.")
+
+    tools = ToolRegistry()
+    available_names = sorted(AVAILABLE_TOOLS)
+    for tool_name in enabled_tools:
+        factory = AVAILABLE_TOOLS.get(tool_name)
+        if factory is None:
+            available_text = ", ".join(available_names) if available_names else "(none)"
+            raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
+        tools.register(factory(runtime))
 
     controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
     if not isinstance(controller_cfg, dict):

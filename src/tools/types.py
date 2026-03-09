@@ -19,3 +19,9 @@ class ToolResult:
 
 
 ToolHandler = Callable[[dict[str, Any]], ToolResult]
+
+
+@dataclass(frozen=True)
+class ToolDefinition:
+    spec: ToolSpec
+    handler: ToolHandler
