@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import logging
 from pathlib import Path
@@ -12,11 +10,11 @@ from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from llmxm2.agent.controller import AgentController, ControllerConfig
-from llmxm2.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
-from llmxm2.sage.runtime import SageRuntime
-from llmxm2.tools.registry import ToolRegistry
-from llmxm2.tools.types import ToolResult
+from src.agent.controller import AgentController, ControllerConfig
+from src.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
+from src.sage.runtime import SageRuntime
+from src.tools.registry import ToolRegistry
+from src.tools.types import ToolResult
 
 
 def _setup_logging() -> None:

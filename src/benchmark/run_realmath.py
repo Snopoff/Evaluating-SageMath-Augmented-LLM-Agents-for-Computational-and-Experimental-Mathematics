@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from llmxm2.agent.controller import AgentController
-from llmxm2.sage.runtime import SageRuntime
+from src.agent.controller import AgentController
+from src.sage.runtime import SageRuntime
 
 _LATEX_WRAPPERS = [
     (r"\\[", ""),
@@ -36,7 +36,7 @@ class BenchmarkConfig:
     symbolic_timeout_sec: float = 8.0
 
     @classmethod
-    def from_config(cls, cfg: Mapping[str, Any], dataset_path: Path) -> "BenchmarkConfig":
+    def from_config(cls, cfg: Mapping[str, Any], dataset_path: Path) -> BenchmarkConfig:
         cfg_dict = dict(cfg)
         output_dir = Path(str(cfg_dict.get("output_dir", ".")))
         return cls(
@@ -206,10 +206,7 @@ class RealMathBenchmarkRunner:
 
         lhs_expr = self._equation_to_expression(lhs)
         rhs_expr = self._equation_to_expression(rhs)
-        snippet = (
-            f"expr = SR((({lhs_expr})-({rhs_expr})))\n"
-            "RESULT = bool(expr.simplify_full() == 0)"
-        )
+        snippet = f"expr = SR((({lhs_expr})-({rhs_expr})))\nRESULT = bool(expr.simplify_full() == 0)"
 
         result = self.sage_runtime.execute_sage_code(
             code=snippet,

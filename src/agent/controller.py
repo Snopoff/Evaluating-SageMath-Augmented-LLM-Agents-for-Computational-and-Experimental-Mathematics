@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from llmxm2.tools.registry import ToolRegistry
+from src.tools.registry import ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class ControllerConfig:
     max_tool_calls: int = 4
 
     @classmethod
-    def from_config(cls, cfg: Mapping[str, Any] | None) -> "ControllerConfig":
+    def from_config(cls, cfg: Mapping[str, Any] | None) -> ControllerConfig:
         cfg_dict = dict(cfg or {})
         return cls(
             max_turns=int(cfg_dict.get("max_turns", 6)),
@@ -125,11 +125,7 @@ class AgentController:
             messages.append(
                 {
                     "role": "user",
-                    "content": (
-                        "Tool result JSON:\n"
-                        f"{json.dumps(trace, ensure_ascii=True)}\n"
-                        "If you can finalize, return tool_call=null."
-                    ),
+                    "content": (f"Tool result JSON:\n{json.dumps(trace, ensure_ascii=True)}\nIf you can finalize, return tool_call=null."),
                 }
             )
 
@@ -163,9 +159,7 @@ class AgentController:
     def _system_prompt(self) -> str:
         tool_lines: list[str] = []
         for spec in self.tool_registry.list_tools():
-            tool_lines.append(
-                f"- {spec.name}: {spec.description}; schema={json.dumps(spec.input_schema, ensure_ascii=True)}"
-            )
+            tool_lines.append(f"- {spec.name}: {spec.description}; schema={json.dumps(spec.input_schema, ensure_ascii=True)}")
 
         if not tool_lines:
             tool_lines = ["- (no tools registered)"]
@@ -173,7 +167,7 @@ class AgentController:
         return (
             "You are a math research assistant. "
             "Reply with exactly one JSON object and no extra prose. "
-            "Schema: {\"answer\": string, \"tool_call\": null | {\"name\": string, \"arguments\": object}}. "
+            'Schema: {"answer": string, "tool_call": null | {"name": string, "arguments": object}}. '
             "Use tools only when needed for computation or verification.\n"
             "Available tools:\n"
             f"{'\n'.join(tool_lines)}"

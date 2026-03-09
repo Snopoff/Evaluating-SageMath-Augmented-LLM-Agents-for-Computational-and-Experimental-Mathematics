@@ -6,9 +6,9 @@ import subprocess
 import time
 from typing import Any, Mapping
 
-from llmxm2.sage.types import ExecutionResult, SageRuntimeConfig
+from src.sage.types import ExecutionResult, SageRuntimeConfig
 
-SAGE_RUNNER_CODE = r'''
+SAGE_RUNNER_CODE = r"""
 import contextlib
 import io
 import json
@@ -104,7 +104,7 @@ if __name__ == "__main__":
                 "error": str(exc),
             }
         )
-'''
+"""
 
 
 class SageRuntime:
@@ -307,7 +307,7 @@ class SageRuntime:
             shell_script = (
                 'SAGE_BIN="sage"; '
                 'if ! command -v "$SAGE_BIN" >/dev/null 2>&1; then '
-                'for p in /home/sage/sage/sage /opt/sagemath/sage /usr/local/bin/sage /usr/bin/sage; do '
+                "for p in /home/sage/sage/sage /opt/sagemath/sage /usr/local/bin/sage /usr/bin/sage; do "
                 '[ -x "$p" ] && SAGE_BIN="$p" && break; '
                 "done; "
                 "fi; "

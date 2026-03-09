@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from llmxm2.tools.types import ToolHandler, ToolResult, ToolSpec
+from src.tools.types import ToolHandler, ToolResult, ToolSpec
 
 
 class ToolRegistry:
