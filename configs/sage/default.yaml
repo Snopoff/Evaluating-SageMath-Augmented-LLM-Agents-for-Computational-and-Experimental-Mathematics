@@ -1,13 +1,11 @@
-image: ${oc.env:SAGEMATH_IMAGE,"docker.io/sagemath/sagemath@sha256:0000000000000000000000000000000000000000000000000000000000000000"}
-platform: ${oc.env:SAGEMATH_PLATFORM,""}
-entrypoint: ${oc.env:SAGEMATH_ENTRYPOINT,"/bin/bash"}
+image: ${oc.env:SAGEMATH_IMAGE,"docker.io/sagemath/sagemath:latest"}
+platform: ${oc.env:SAGEMATH_PLATFORM,"linux/amd64"}
+
 cpus: 1.0
 memory: "1g"
 pids_limit: 128
+
 wall_timeout_sec: 8
 cpu_limit_sec: 5
 output_max_bytes: 262144
-user: ${oc.env:SAGEMATH_USER,""}
-home_dir: ${oc.env:SAGEMATH_HOME,"/tmp"}
-dot_sage_dir: ${oc.env:SAGEMATH_DOT_SAGE,"/tmp/.sage"}
-progress_logs: true
+progress_logs: ${progress_logs}

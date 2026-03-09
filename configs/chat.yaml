@@ -3,13 +3,10 @@ defaults:
   - model: openai
   - controller: default
   - sage: default
-  - benchmark: default
+  - prompt: transformer
   - _self_
 
 mode: chat
 progress_logs: true
-prompt: "Explain transformers in 2 sentences."
-prompt_file: null
 tools:
-  enabled:
-    - sage_exec
+  - sage_exec

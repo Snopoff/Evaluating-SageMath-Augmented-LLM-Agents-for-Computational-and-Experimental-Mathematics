@@ -1,67 +1,51 @@
-import json
-import logging
 from pathlib import Path
 
 import hydra
 import rootutils
-from hydra.utils import instantiate, to_absolute_path
+import hydra.utils as hu
 from omegaconf import DictConfig, OmegaConf
+
+from typing import Iterable
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.agent.controller import AgentController, ControllerConfig
-from src.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
-from src.sage.runtime import SageRuntime
-from src.tools.catalog import AVAILABLE_TOOLS
-from src.tools.registry import ToolRegistry
+from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
+from src.sage.runtime import SageRuntime  # noqa: E402
+from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
+from src.tools.registry import ToolRegistry  # noqa: E402
+from src.utils.logging import setup_logging, progress  # noqa: E402
+from src.utils.config_helpers import resolve_prompt  # noqa: E402
 
 
-def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
-
-
-def _progress(enabled: bool, message: str) -> None:
-    if enabled:
-        print(f"[progress] {message}", flush=True)
-
-
-@hydra.main(version_base=None, config_path="configs", config_name="default")
+@hydra.main(version_base=None, config_path="configs", config_name="chat")
 def main(cfg: DictConfig) -> None:
-    _setup_logging()
+    setup_logging()
 
     mode = str(cfg.get("mode", "chat"))
     progress_logs = bool(cfg.get("progress_logs", True))
-    _progress(progress_logs, f"starting main (mode={mode})")
+    progress(progress_logs, f"starting main (mode={mode})")
 
-    # Keep provider construction Hydra-driven.
-    client = instantiate(cfg.provider.client)
+    client = hu.instantiate(cfg.provider.client)
 
     sage_cfg = OmegaConf.to_container(cfg.sage, resolve=True)
     if not isinstance(sage_cfg, dict):
         raise ValueError("Config 'sage' must be a mapping.")
+    runtime = SageRuntime.from_config(sage_cfg)  # type: ignore
 
-    sage_cfg.setdefault("progress_logs", progress_logs)
-    runtime = SageRuntime.from_config(sage_cfg)
-
-    tools_cfg = OmegaConf.to_container(cfg.tools, resolve=True)
-    if not isinstance(tools_cfg, dict):
-        raise ValueError("Config 'tools' must be a mapping.")
-
-    enabled_tools = tools_cfg.get("enabled", [])
-    if not isinstance(enabled_tools, list) or not all(isinstance(name, str) for name in enabled_tools):
-        raise ValueError("Config 'tools.enabled' must be a list of tool names.")
+    tool_names = cfg.get("tools", [])
+    if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):
+        raise ValueError("Config 'tools' must be a list of tool names.")
 
     tools = ToolRegistry()
     available_names = sorted(AVAILABLE_TOOLS)
-    for tool_name in enabled_tools:
+    for tool_name in tool_names:
         factory = AVAILABLE_TOOLS.get(tool_name)
         if factory is None:
             available_text = ", ".join(available_names) if available_names else "(none)"
             raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
         tools.register(factory(runtime))
+
+    progress(progress_logs, f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
 
     controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
     if not isinstance(controller_cfg, dict):
@@ -71,19 +55,14 @@ def main(cfg: DictConfig) -> None:
         client=client,
         model_name=str(cfg.model.name),
         tool_registry=tools,
-        config=ControllerConfig.from_config(controller_cfg),
+        config=ControllerConfig.from_config(controller_cfg),  # type: ignore
     )
 
     if mode == "chat":
-        prompt = str(cfg.get("prompt", ""))
-        prompt_file = cfg.get("prompt_file")
-        if prompt_file is not None and str(prompt_file):
-            prompt_path = Path(to_absolute_path(str(prompt_file)))
-            _progress(progress_logs, f"loading prompt from file: {prompt_path}")
-            prompt = prompt_path.read_text(encoding="utf-8").strip()
+        prompt = resolve_prompt(cfg.prompt, progress_logs)
 
         result = controller.solve(prompt)
-        _progress(progress_logs, f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
+        progress(progress_logs, f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
         print(result.final_answer)
         return
 
@@ -92,11 +71,11 @@ def main(cfg: DictConfig) -> None:
         if not isinstance(bench_cfg, dict):
             raise ValueError("Config 'benchmark' must be a mapping.")
 
-        dataset_path = Path(to_absolute_path(str(cfg.benchmark.dataset_path)))
-        benchmark_cfg = BenchmarkConfig.from_config(bench_cfg, dataset_path=dataset_path)
-        runner = RealMathBenchmarkRunner(controller=controller, config=benchmark_cfg, sage_runtime=runtime)
-        metrics = runner.run()
-        print(json.dumps(metrics, indent=2, ensure_ascii=False))
+        dataset_path = Path(hu.to_absolute_path(str(cfg.benchmark.dataset_path)))
+        benchmark_cfg = hu.instantiate(cfg.benchmark, dataset_path=dataset_path)
+        # runner = hu.instantiate(cfg.benchmark.runner, controller=controller, config=benchmark_cfg, sage_runtime=runtime)
+        # metrics = runner.run()
+        # print(json.dumps(metrics, indent=2, ensure_ascii=False))
         return
 
     raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat' or 'benchmark'.")

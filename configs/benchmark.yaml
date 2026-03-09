@@ -1,0 +1,13 @@
+defaults:
+  - provider: openai
+  - model: openai
+  - controller: default
+  - sage: default
+  - benchmark: default
+  - _self_
+
+mode: benchmark
+progress_logs: true
+
+tools:
+  - sage_exec

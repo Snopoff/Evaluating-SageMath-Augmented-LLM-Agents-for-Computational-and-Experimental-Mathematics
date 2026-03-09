@@ -7,10 +7,10 @@ Minimal LLM + Sage experimentation codebase.
 The main path is intentionally small:
 
 - `main.py`
-- `src/llmxm2/agent/`
-- `src/llmxm2/tools/`
-- `src/llmxm2/sage/`
-- `src/llmxm2/benchmark/`
+- `src/agent/`
+- `src/tools/`
+- `src/sage/`
+- `src/benchmark/`
 
 No MCP server layer in the main run path and no large policy framework.
 
@@ -22,17 +22,29 @@ No MCP server layer in the main run path and no large policy framework.
 uv sync
 ```
 
-2. Set environment variables:
+2. Install Docker and make sure the Docker daemon is running.
+
+The Sage runtime executes via `docker run`, so Docker is a required local dependency.
+
+3. Set environment variables:
 
 ```bash
 export OPENAI_API_KEY=...
 export SAGEMATH_IMAGE='docker.io/sagemath/sagemath@sha256:<real_digest>'
 ```
 
+`SAGEMATH_IMAGE` must point to a real Sage image digest. The default config value is only a placeholder.
+
 Optional (Apple Silicon with amd64 image):
 
 ```bash
 export SAGEMATH_PLATFORM='linux/amd64'
+```
+
+Optional: pre-pull the image once before running. If the image is missing locally, `docker run` will usually pull it automatically.
+
+```bash
+docker pull "$SAGEMATH_IMAGE"
 ```
 
 ## Run
@@ -65,8 +77,7 @@ Tools are selected by Hydra name in `configs/default.yaml`:
 
 ```yaml
 tools:
-  enabled:
-    - sage_exec
+  - sage_exec
 ```
 
 `src/tools/catalog.py` currently exposes one minimal built-in:
