@@ -23,6 +23,22 @@ _ALLOWED_SYMBOLIC_CHARS = re.compile(r"^[0-9A-Za-z_+\-*/^=()\[\]{}.,<>| :]+$")
 
 @dataclass(frozen=True)
 class BenchmarkConfig:
+    """Configuration for running the RealMath benchmark loop.
+
+    Args:
+        dataset_path: Input dataset path containing benchmark rows.
+        output_dir: Directory where predictions, traces, and metrics are written.
+        limit: Maximum number of dataset rows to process.
+        progress_logs: Whether benchmark progress messages are enabled.
+        question_field: Input field name containing the benchmark prompt.
+        answer_field: Input field name containing the reference answer.
+        id_field: Input field name used as the row identifier.
+        predictions_file: Output filename for prediction records.
+        tool_traces_file: Output filename for tool trace records.
+        metrics_file: Output filename for aggregate metrics.
+        symbolic_timeout_sec: Timeout used for symbolic Sage equivalence checks.
+    """
+
     dataset_path: Path
     output_dir: Path
     limit: int = 25
@@ -56,6 +72,15 @@ class BenchmarkConfig:
 
 @dataclass(frozen=True)
 class ScoreResult:
+    """Normalized comparison result for one prediction/reference pair.
+
+    Args:
+        correct: Whether the prediction matched the reference.
+        match_type: Match mode such as ``exact`` or ``symbolic``.
+        normalized_prediction: Canonicalized predicted answer.
+        normalized_reference: Canonicalized reference answer.
+    """
+
     correct: bool
     match_type: str
     normalized_prediction: str
@@ -63,6 +88,14 @@ class ScoreResult:
 
 
 class RealMathBenchmarkRunner:
+    """Executes benchmark rows and writes predictions, traces, and metrics.
+
+    Args:
+        controller: Controller used to answer benchmark questions.
+        config: Benchmark configuration and output locations.
+        sage_runtime: Optional Sage runtime used for symbolic equivalence checks.
+    """
+
     def __init__(
         self,
         controller: AgentController,

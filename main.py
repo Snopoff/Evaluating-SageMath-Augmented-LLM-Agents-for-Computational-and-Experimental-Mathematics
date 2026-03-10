@@ -13,7 +13,7 @@ from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
 from src.sage.runtime import SageRuntime  # noqa: E402
 from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
 from src.tools.registry import ToolRegistry  # noqa: E402
-from src.utils.logging import setup_logging, progress  # noqa: E402
+from src.utils.logging import setup_logging, progress, save_logs  # noqa: E402
 from src.utils.config_helpers import resolve_prompt  # noqa: E402
 
 
@@ -23,7 +23,8 @@ def main(cfg: DictConfig) -> None:
 
     mode = str(cfg.get("mode", "chat"))
     progress_logs = bool(cfg.get("progress_logs", True))
-    progress(progress_logs, f"starting main (mode={mode})")
+    if progress_logs:
+        progress(f"starting main (mode={mode})")
 
     client = hu.instantiate(cfg.provider.client)
 
@@ -45,7 +46,8 @@ def main(cfg: DictConfig) -> None:
             raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
         tools.register(factory(runtime))
 
-    progress(progress_logs, f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
+    if progress_logs:
+        progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
 
     controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
     if not isinstance(controller_cfg, dict):
@@ -62,8 +64,10 @@ def main(cfg: DictConfig) -> None:
         prompt = resolve_prompt(cfg.prompt, progress_logs)
 
         result = controller.solve(prompt)
-        progress(progress_logs, f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
+        if progress_logs:
+            progress(f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
         print(result.final_answer)
+        save_logs("chat_logs")
         return
 
     if mode == "benchmark":

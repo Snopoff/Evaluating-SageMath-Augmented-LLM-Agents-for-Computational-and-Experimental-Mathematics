@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-from functools import partial
 from typing import Any, Callable
 
 from src.sage.runtime import SageRuntime
@@ -17,18 +14,13 @@ _SAGE_EXEC_SCHEMA = {
 }
 
 
-def _sage_exec_handler(runtime: SageRuntime, arguments: dict[str, Any]) -> ToolResult:
-    code = arguments.get("code")
-    if not isinstance(code, str) or not code.strip():
-        return ToolResult(ok=False, content="sage_exec requires 'code' as a non-empty string")
-
-    result_var = arguments.get("result_var", "RESULT")
-    if not isinstance(result_var, str) or not result_var.strip():
-        result_var = "RESULT"
-
-    timeout = arguments.get("timeout_sec")
-    timeout_sec: float | None = float(timeout) if isinstance(timeout, (int, float)) else None
-
+def _run_sage_tool(
+    runtime: SageRuntime,
+    *,
+    code: str,
+    result_var: str = "RESULT",
+    timeout_sec: float | None = None,
+) -> ToolResult:
     result = runtime.execute_sage_code(
         code=code,
         result_var=result_var,
@@ -54,13 +46,32 @@ def _sage_exec_handler(runtime: SageRuntime, arguments: dict[str, Any]) -> ToolR
 
 
 def make_sage_exec_tool(runtime: SageRuntime) -> ToolDefinition:
+    def _sage_exec_handler(arguments: dict[str, Any]) -> ToolResult:
+        code = arguments.get("code")
+        if not isinstance(code, str) or not code.strip():
+            return ToolResult(ok=False, content="sage_exec requires 'code' as a non-empty string")
+
+        result_var = arguments.get("result_var", "RESULT")
+        if not isinstance(result_var, str) or not result_var.strip():
+            result_var = "RESULT"
+
+        timeout = arguments.get("timeout_sec")
+        timeout_sec: float | None = float(timeout) if isinstance(timeout, (int, float)) else None
+
+        return _run_sage_tool(
+            runtime=runtime,
+            code=code,
+            result_var=result_var,
+            timeout_sec=timeout_sec,
+        )
+
     return ToolDefinition(
         spec=ToolSpec(
             name="sage_exec",
             description="Execute raw Sage code inside Docker.",
             input_schema=dict(_SAGE_EXEC_SCHEMA),
         ),
-        handler=partial(_sage_exec_handler, runtime),
+        handler=_sage_exec_handler,
     )
 
 

@@ -23,6 +23,7 @@ def resolve_prompt(prompt: DictConfig, progress_logs: bool) -> str:
         return text.strip()
 
     prompt_path = Path(hu.to_absolute_path(file_value))
-    progress(progress_logs, f"loading prompt from file: {prompt_path}")
+    if progress_logs:
+        progress(f"loading prompt from file: {prompt_path}")
 
     return prompt_path.read_text(encoding="utf-8").strip()

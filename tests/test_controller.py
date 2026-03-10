@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -92,6 +93,41 @@ class AgentControllerTests(unittest.TestCase):
 
         self.assertEqual(result.final_answer, "ok")
         self.assertEqual(result.stop_reason, "finalized")
+
+    def test_progress_logs_include_model_reply_and_tool_call(self) -> None:
+        client = _FakeClient(
+            [
+                '{"answer": "Candidate", "tool_call": {"name": "echo", "arguments": {"value": "4"}}}',
+                '{"answer": "4", "tool_call": null}',
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _echo(args: dict[str, object]) -> ToolResult:
+            return ToolResult(ok=True, content=str(args.get("value", "")), metadata={"status": "ok"})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="echo", description="Echo", input_schema={"type": "object"}),
+                handler=_echo,
+            )
+        )
+
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(max_turns=3, temperature=0.0, progress_logs=True),
+        )
+
+        with patch("src.agent.controller.progress") as mocked_progress:
+            result = controller.solve("What is 2+2?")
+
+        self.assertEqual(result.final_answer, "4")
+        messages = [call.args[0] for call in mocked_progress.call_args_list]
+        self.assertTrue(any("model reply:" in message for message in messages))
+        self.assertTrue(any("tool call: echo" in message for message in messages))
+        self.assertTrue(any("tool result: echo" in message for message in messages))
 
 
 if __name__ == "__main__":

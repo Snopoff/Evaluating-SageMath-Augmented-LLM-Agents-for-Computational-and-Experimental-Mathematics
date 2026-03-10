@@ -5,10 +5,20 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from src.tools.registry import ToolRegistry
+from src.utils.logging import progress
 
 
 @dataclass(frozen=True)
 class ControllerConfig:
+    """Runtime knobs for the tool-using chat loop.
+
+    Args:
+        max_turns: Maximum number of model turns before stopping.
+        temperature: Sampling temperature passed to the chat backend.
+        progress_logs: Whether to emit controller progress messages.
+        max_tool_calls: Maximum number of tool dispatches allowed per solve.
+    """
+
     max_turns: int = 6
     temperature: float = 0.0
     progress_logs: bool = False
@@ -27,6 +37,15 @@ class ControllerConfig:
 
 @dataclass(frozen=True)
 class SolveResult:
+    """Final output and execution trace returned by the controller.
+
+    Args:
+        final_answer: Final answer returned to the caller.
+        tool_traces: Per-tool execution records collected during the solve loop.
+        turn_count: Number of model turns consumed.
+        stop_reason: Terminal reason such as ``finalized`` or ``max_turns_reached``.
+    """
+
     final_answer: str
     tool_traces: list[dict[str, Any]]
     turn_count: int
@@ -35,11 +54,27 @@ class SolveResult:
 
 @dataclass(frozen=True)
 class ParsedTurn:
+    """Structured representation of one model turn.
+
+    Args:
+        answer: Assistant answer extracted from the model payload.
+        tool_call: Optional tool call payload with ``name`` and ``arguments``.
+    """
+
     answer: str
     tool_call: dict[str, Any] | None
 
 
 class AgentController:
+    """Runs the iterative chat loop and dispatches tool calls.
+
+    Args:
+        client: Chat-completions-compatible provider client.
+        model_name: Model identifier passed to the provider.
+        tool_registry: Registry used to expose and dispatch tools.
+        config: Optional controller configuration. Defaults to ``ControllerConfig()``.
+    """
+
     def __init__(
         self,
         client: Any,
@@ -54,7 +89,28 @@ class AgentController:
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
-            print(f"[progress][controller] {message}", flush=True)
+            progress(f"[bold orange1]\[controller][/bold orange1] {message}")  # type: ignore because rich markup
+
+    @staticmethod
+    def _preview_text(text: str, max_chars: int = 240) -> str:
+        compact = " ".join(text.strip().split())
+        if len(compact) <= max_chars:
+            return compact
+        return f"{compact[: max_chars - 3]}..."
+
+    def _log_model_reply(self, raw: str) -> None:
+        self._progress(f"model reply: {self._preview_text(raw)}")
+
+    def _log_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> None:
+        self._progress(f"tool call: {tool_name} args={self._preview_text(json.dumps(arguments, ensure_ascii=True), max_chars=320)}")
+
+    def _log_tool_result(self, trace: Mapping[str, Any]) -> None:
+        metadata = trace.get("metadata", {})
+        status = metadata.get("status", "unknown") if isinstance(metadata, Mapping) else "unknown"
+        self._progress(
+            f"tool result: {trace.get('name', '?')} ok={trace.get('ok', False)} status={status} "
+            f"content={self._preview_text(str(trace.get('content', '')))}"
+        )
 
     def solve(self, question: str) -> SolveResult:
         messages: list[dict[str, str]] = [
@@ -67,9 +123,11 @@ class AgentController:
         for turn_index in range(self.config.max_turns):
             self._progress(f"turn {turn_index + 1}/{self.config.max_turns}")
             raw = self._chat_completion(messages)
+            self._log_model_reply(raw)
             parsed = self._parse_turn(raw)
             if parsed is None:
                 final = raw.strip() or last_answer
+                self._progress("model reply did not contain a valid JSON payload")
                 return SolveResult(
                     final_answer=final,
                     tool_traces=tool_traces,
@@ -101,6 +159,7 @@ class AgentController:
             tool_name = parsed.tool_call.get("name")
             tool_args = parsed.tool_call.get("arguments", {})
             if not isinstance(tool_name, str) or not tool_name.strip() or not isinstance(tool_args, Mapping):
+                self._progress("model emitted invalid tool_call shape; requesting corrected JSON")
                 messages.append({"role": "assistant", "content": raw})
                 messages.append(
                     {
@@ -110,16 +169,20 @@ class AgentController:
                 )
                 continue
 
-            tool_result = self.tool_registry.execute(tool_name.strip(), dict(tool_args))
+            tool_name_str = tool_name.strip()
+            tool_args_dict = dict(tool_args)
+            self._log_tool_call(tool_name_str, tool_args_dict)
+            tool_result = self.tool_registry.execute(tool_name_str, tool_args_dict)
             trace = {
                 "turn": turn_index + 1,
-                "name": tool_name.strip(),
-                "arguments": dict(tool_args),
+                "name": tool_name_str,
+                "arguments": tool_args_dict,
                 "ok": tool_result.ok,
                 "content": tool_result.content,
                 "metadata": dict(tool_result.metadata),
             }
             tool_traces.append(trace)
+            self._log_tool_result(trace)
 
             messages.append({"role": "assistant", "content": raw})
             messages.append(

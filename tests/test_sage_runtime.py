@@ -8,12 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from llmxm2.sage.runtime import SageRuntime
-from llmxm2.sage.types import SageRuntimeConfig
+from src.sage.runtime import SAGE_RUNNER_CODE, SageRuntime
+from src.sage.types import SageRuntimeConfig
 
 
 class SageRuntimeTests(unittest.TestCase):
@@ -39,6 +38,7 @@ class SageRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.result_plain, "4")
+        self.assertNotIn("input", mocked_run.call_args.kwargs)
 
     def test_timeout_maps_to_timeout_status(self) -> None:
         runtime = SageRuntime(SageRuntimeConfig(image="docker.io/sagemath/sagemath:latest"))
@@ -60,6 +60,20 @@ class SageRuntimeTests(unittest.TestCase):
         self.assertIn("--platform", cmd)
         idx = cmd.index("--platform")
         self.assertEqual(cmd[idx + 1], "linux/amd64")
+
+    def test_runtime_exec_args_pass_payload_as_argv(self) -> None:
+        runtime = SageRuntime(SageRuntimeConfig(image="docker.io/sagemath/sagemath:latest"))
+
+        args = runtime._runtime_exec_args('{"code":"RESULT=2+2"}')
+
+        self.assertEqual(args[-1], '{"code":"RESULT=2+2"}')
+        self.assertIn(SAGE_RUNNER_CODE, args)
+
+    def test_runner_is_raw_code_only_and_uses_sage_globals(self) -> None:
+        self.assertIn("namespace = dict(globals())", SAGE_RUNNER_CODE)
+        self.assertNotIn('mode = payload.get("mode"', SAGE_RUNNER_CODE)
+        self.assertNotIn('if mode == "operation"', SAGE_RUNNER_CODE)
+        self.assertNotIn("LLMXM2_PAYLOAD", SAGE_RUNNER_CODE)
 
 
 if __name__ == "__main__":

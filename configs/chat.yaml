@@ -3,7 +3,7 @@ defaults:
   - model: openai
   - controller: default
   - sage: default
-  - prompt: transformer
+  - prompt: frontiermath_degree19 #transformer
   - _self_
 
 mode: chat

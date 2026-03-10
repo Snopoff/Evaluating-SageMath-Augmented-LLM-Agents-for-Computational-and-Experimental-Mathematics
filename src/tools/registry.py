@@ -6,6 +6,8 @@ from src.tools.types import ToolDefinition, ToolResult, ToolSpec
 
 
 class ToolRegistry:
+    """Minimal registry for tool registration, lookup, and dispatch."""
+
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
 

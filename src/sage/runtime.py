@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import math
 import subprocess
@@ -7,107 +5,95 @@ import time
 from typing import Any, Mapping
 
 from src.sage.types import ExecutionResult, SageRuntimeConfig
+from src.utils.logging import progress
 
 SAGE_RUNNER_CODE = r"""
 import contextlib
 import io
 import json
-import os
 import sys
+import traceback
 
 from sage.all import *
 
 
-def _emit(payload):
-    sys.stdout.write(json.dumps(payload, ensure_ascii=True))
+def emit(payload):
+    sys.stdout.write("LLM_SAGE_RESULT:")
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    sys.stdout.flush()
 
 
-def _main():
-    if len(sys.argv) > 1:
-        raw_payload = sys.argv[1]
-    elif os.environ.get("LLMXM2_PAYLOAD"):
-        raw_payload = os.environ["LLMXM2_PAYLOAD"]
-    else:
-        raw_payload = sys.stdin.read()
+def main():
+    if len(sys.argv) != 2:
+        raise ValueError("expected JSON payload as the first argument")
 
-    payload = json.loads(raw_payload)
-    mode = payload.get("mode", "code")
+    payload = json.loads(sys.argv[1])
+    code = payload.get("code", "")
+    if not isinstance(code, str) or not code.strip():
+        raise ValueError("code must be a non-empty string")
 
-    if mode == "code":
-        code = payload.get("code", "")
-        if not isinstance(code, str) or not code.strip():
-            raise ValueError("code must be a non-empty string")
+    result_var = payload.get("result_var", "RESULT")
+    if not isinstance(result_var, str) or not result_var.strip():
+        result_var = "RESULT"
 
-        result_var = payload.get("result_var", "RESULT")
-        if not isinstance(result_var, str) or not result_var.strip():
-            result_var = "RESULT"
-
-        namespace = {"__builtins__": __builtins__}
-        stdout_buffer = io.StringIO()
+    # Copy runner globals so user code can access Sage symbols.
+    namespace = dict(globals())
+    namespace["__builtins__"] = __builtins__
+    stdout_buffer = io.StringIO()
+    try:
         with contextlib.redirect_stdout(stdout_buffer):
             exec(code, namespace, namespace)
-
-        result_obj = namespace.get(result_var)
-        if result_obj is None and "result" in namespace:
-            result_obj = namespace.get("result")
-
-        _emit(
+    except Exception as exc:
+        emit(
             {
-                "status": "ok",
-                "result_plain": "" if result_obj is None else str(result_obj),
-                "result_latex": "" if result_obj is None else str(latex(result_obj)),
+                "status": "error",
+                "result_plain": "",
+                "result_latex": "",
                 "stdout": stdout_buffer.getvalue(),
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
             }
         )
         return
 
-    if mode == "operation":
-        operation = payload.get("operation")
-        if not isinstance(operation, str) or not operation.strip():
-            raise ValueError("operation must be a non-empty string")
+    result_obj = namespace.get(result_var)
+    if result_obj is None and "result" in namespace:
+        result_obj = namespace.get("result")
 
-        args = payload.get("args", [])
-        kwargs = payload.get("kwargs", {})
-        if not isinstance(args, list):
-            raise ValueError("args must be a list")
-        if not isinstance(kwargs, dict):
-            raise ValueError("kwargs must be an object")
-
-        target = globals().get(operation)
-        if not callable(target):
-            raise ValueError(f"Sage callable not found: {operation}")
-
-        result = target(*args, **kwargs)
-        _emit(
-            {
-                "status": "ok",
-                "result_plain": str(result),
-                "result_latex": str(latex(result)),
-                "stdout": "",
-            }
-        )
-        return
-
-    raise ValueError(f"Unknown mode: {mode}")
+    emit(
+        {
+            "status": "ok",
+            "result_plain": "" if result_obj is None else str(result_obj),
+            "result_latex": "" if result_obj is None else str(latex(result_obj)),
+            "stdout": stdout_buffer.getvalue(),
+        }
+    )
 
 
 if __name__ == "__main__":
     try:
-        _main()
+        main()
     except Exception as exc:
-        _emit(
+        emit(
             {
                 "status": "error",
                 "result_plain": "",
                 "result_latex": "",
                 "stdout": "",
                 "error": str(exc),
+                "traceback": traceback.format_exc(),
             }
         )
 """
 
 
 class SageRuntime:
+    """Executes Sage code inside a constrained Docker container.
+
+    Args:
+        config: Resolved Docker and execution limits for Sage runs.
+    """
+
     def __init__(self, config: SageRuntimeConfig):
         if not config.image:
             raise ValueError("Sage runtime requires a Docker image.")
@@ -141,39 +127,13 @@ class SageRuntime:
         result_var: str = "RESULT",
     ) -> ExecutionResult:
         payload = {
-            "mode": "code",
             "code": code,
             "result_var": result_var,
         }
         return self._execute(payload=payload, timeout_sec=timeout_sec)
 
-    def execute_operation(
-        self,
-        operation: str,
-        args: list[Any] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        timeout_sec: float | None = None,
-    ) -> ExecutionResult:
-        payload = {
-            "mode": "operation",
-            "operation": operation,
-            "args": list(args or []),
-            "kwargs": dict(kwargs or {}),
-        }
-        return self._execute(payload=payload, timeout_sec=timeout_sec)
-
     def _execute(self, payload: dict[str, Any], timeout_sec: float | None = None) -> ExecutionResult:
         payload_json = json.dumps(payload, ensure_ascii=True)
-        if len(payload_json.encode("utf-8")) > self.config.output_max_bytes:
-            return ExecutionResult(
-                status="error",
-                result_plain="",
-                result_latex="",
-                runtime_ms=0,
-                stdout="",
-                stderr="",
-                error="Payload exceeds output_max_bytes.",
-            )
 
         cmd = self._build_docker_cmd(payload_json)
         timeout = timeout_sec if timeout_sec is not None else self.config.wall_timeout_sec
@@ -182,7 +142,6 @@ class SageRuntime:
         try:
             completed = subprocess.run(
                 cmd,
-                input=payload_json,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -227,8 +186,20 @@ class SageRuntime:
                 exit_code=completed.returncode,
             )
 
+        if self.config.progress_logs and False:
+            progress(f"Execution completed in {runtime_ms} ms with stdout: {stdout!r}...")
+            progress(f"Execution exit code: {completed.returncode}")
+            progress(f"Execution stderr: {stderr!r}")
+
         parsed = self._parse_runner_output(stdout)
+
         if parsed is None:
+            if stderr.strip():
+                error_msg = stderr.strip()
+            elif completed.returncode != 0:
+                error_msg = f"Sage process exited with code {completed.returncode} before producing JSON output."
+            else:
+                error_msg = "Runner output was not valid JSON."
             return ExecutionResult(
                 status="error",
                 result_plain="",
@@ -236,12 +207,13 @@ class SageRuntime:
                 runtime_ms=runtime_ms,
                 stdout=stdout,
                 stderr=stderr,
-                error="Runner output was not valid JSON.",
+                error=error_msg,
                 exit_code=completed.returncode,
             )
 
         status = str(parsed.get("status", "error"))
-        error = str(parsed.get("error", ""))
+        error_value = parsed.get("error", "")
+        error = str(error_value) if error_value else ""
 
         if completed.returncode != 0 and status == "ok":
             status = "error"
@@ -254,13 +226,12 @@ class SageRuntime:
             result_latex=str(parsed.get("result_latex", "")),
             runtime_ms=runtime_ms,
             stdout=str(parsed.get("stdout", "")),
-            stderr=stderr,
+            stderr=(f"{stderr}\n{parsed.get('traceback', '')}".strip() if parsed.get("traceback") else stderr),
             error=error,
             exit_code=completed.returncode,
         )
 
     def _build_docker_cmd(self, payload_json: str) -> list[str]:
-        _ = payload_json
         cmd = ["docker", "run", "--rm"]
 
         if self.config.entrypoint:
@@ -326,13 +297,25 @@ class SageRuntime:
         text = stdout.strip()
         if not text:
             return None
-        candidate = text.splitlines()[-1]
-        try:
-            payload = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-        return payload if isinstance(payload, dict) else None
 
+        marker = "LLM_SAGE_RESULT:"
 
-def execute_sage_code(runtime: SageRuntime, code: str, timeout_sec: float | None = None) -> ExecutionResult:
-    return runtime.execute_sage_code(code=code, timeout_sec=timeout_sec)
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+
+            if marker in line:
+                candidate = line.split(marker, 1)[1].strip()
+            else:
+                candidate = line
+
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+            if isinstance(payload, dict):
+                return payload
+
+        return None
