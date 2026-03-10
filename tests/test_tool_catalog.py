@@ -33,6 +33,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
                 status="ok",
                 result_plain="4",
                 result_latex="4",
+                result_data={"verified": True},
                 runtime_ms=12,
                 stdout="",
                 stderr="",
@@ -47,6 +48,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
         self.assertEqual(result.content, "4")
         self.assertEqual(result.metadata["status"], "ok")
         self.assertEqual(result.metadata["result_latex"], "4")
+        self.assertEqual(result.metadata["result_data"], {"verified": True})
 
     def test_handler_maps_runtime_failure(self) -> None:
         runtime = types.SimpleNamespace(
@@ -54,6 +56,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
                 status="timeout",
                 result_plain="",
                 result_latex="",
+                result_data=None,
                 runtime_ms=50,
                 stdout="",
                 stderr="runtime stderr",

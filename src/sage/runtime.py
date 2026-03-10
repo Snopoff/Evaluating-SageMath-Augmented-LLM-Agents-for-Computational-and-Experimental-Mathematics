@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import json
 import math
 import subprocess
+import tempfile
 import time
+from pathlib import Path
 from typing import Any, Mapping
 
 from src.sage.types import ExecutionResult, SageRuntimeConfig
 from src.utils.logging import progress
+
+CONTAINER_SOURCE_FILE = "/tmp/llmxm2_sage_exec.py"
 
 SAGE_RUNNER_CODE = r"""
 import contextlib
@@ -23,26 +29,52 @@ def emit(payload):
     sys.stdout.flush()
 
 
+def to_result_data(value, depth=0):
+    if depth > 6:
+        return str(value)
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+
+    if isinstance(value, dict):
+        return {str(key): to_result_data(item, depth + 1) for key, item in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [to_result_data(item, depth + 1) for item in value]
+
+    return str(value)
+
+
 def main():
     if len(sys.argv) != 2:
         raise ValueError("expected JSON payload as the first argument")
 
     payload = json.loads(sys.argv[1])
-    code = payload.get("code", "")
-    if not isinstance(code, str) or not code.strip():
-        raise ValueError("code must be a non-empty string")
-
+    source_file = payload.get("source_file", "")
+    if not isinstance(source_file, str):
+        source_file = ""
     result_var = payload.get("result_var", "RESULT")
     if not isinstance(result_var, str) or not result_var.strip():
         result_var = "RESULT"
 
+    if source_file:
+        with open(source_file, "r", encoding="utf-8") as handle:
+            code = handle.read()
+    else:
+        code = payload.get("code", "")
+
+    if not isinstance(code, str) or not code.strip():
+        raise ValueError("code must be a non-empty string")
+
     # Copy runner globals so user code can access Sage symbols.
     namespace = dict(globals())
     namespace["__builtins__"] = __builtins__
+    if source_file:
+        namespace["__file__"] = source_file
     stdout_buffer = io.StringIO()
     try:
         with contextlib.redirect_stdout(stdout_buffer):
-            exec(code, namespace, namespace)
+            exec(compile(code, source_file or "<sage_exec>", "exec"), namespace, namespace)
     except Exception as exc:
         emit(
             {
@@ -65,6 +97,7 @@ def main():
             "status": "ok",
             "result_plain": "" if result_obj is None else str(result_obj),
             "result_latex": "" if result_obj is None else str(latex(result_obj)),
+            "result_data": to_result_data(result_obj),
             "stdout": stdout_buffer.getvalue(),
         }
     )
@@ -100,7 +133,7 @@ class SageRuntime:
         self.config = config
 
     @classmethod
-    def from_config(cls, cfg: Mapping[str, Any]) -> "SageRuntime":
+    def from_config(cls, cfg: Mapping[str, Any]) -> SageRuntime:
         cfg_dict = dict(cfg)
         return cls(
             SageRuntimeConfig(
@@ -126,16 +159,25 @@ class SageRuntime:
         timeout_sec: float | None = None,
         result_var: str = "RESULT",
     ) -> ExecutionResult:
-        payload = {
-            "code": code,
-            "result_var": result_var,
-        }
-        return self._execute(payload=payload, timeout_sec=timeout_sec)
+        return self._execute(code=code, result_var=result_var, timeout_sec=timeout_sec)
 
-    def _execute(self, payload: dict[str, Any], timeout_sec: float | None = None) -> ExecutionResult:
-        payload_json = json.dumps(payload, ensure_ascii=True)
+    def _execute(self, code: str, result_var: str, timeout_sec: float | None = None) -> ExecutionResult:
+        try:
+            source_file = self._write_source_file(code)
+        except OSError as exc:
+            return ExecutionResult(
+                status="error",
+                result_plain="",
+                result_latex="",
+                result_data=None,
+                runtime_ms=0,
+                stdout="",
+                stderr="",
+                error=f"Failed to write Sage source file: {exc}",
+            )
 
-        cmd = self._build_docker_cmd(payload_json)
+        payload_json = json.dumps({"source_file": CONTAINER_SOURCE_FILE, "result_var": result_var}, ensure_ascii=True)
+        cmd = self._build_docker_cmd(payload_json, source_file)
         timeout = timeout_sec if timeout_sec is not None else self.config.wall_timeout_sec
 
         started = time.perf_counter()
@@ -153,6 +195,7 @@ class SageRuntime:
                 status="timeout",
                 result_plain="",
                 result_latex="",
+                result_data=None,
                 runtime_ms=runtime_ms,
                 stdout="",
                 stderr="",
@@ -164,11 +207,17 @@ class SageRuntime:
                 status="error",
                 result_plain="",
                 result_latex="",
+                result_data=None,
                 runtime_ms=runtime_ms,
                 stdout="",
                 stderr="",
                 error=f"Failed to invoke docker: {exc}",
             )
+        finally:
+            try:
+                source_file.unlink()
+            except FileNotFoundError:
+                pass
 
         runtime_ms = int((time.perf_counter() - started) * 1000)
         stdout = completed.stdout or ""
@@ -179,6 +228,7 @@ class SageRuntime:
                 status="error",
                 result_plain="",
                 result_latex="",
+                result_data=None,
                 runtime_ms=runtime_ms,
                 stdout="",
                 stderr=stderr,
@@ -186,7 +236,7 @@ class SageRuntime:
                 exit_code=completed.returncode,
             )
 
-        if self.config.progress_logs and False:
+        if self.config.progress_logs:
             progress(f"Execution completed in {runtime_ms} ms with stdout: {stdout!r}...")
             progress(f"Execution exit code: {completed.returncode}")
             progress(f"Execution stderr: {stderr!r}")
@@ -204,6 +254,7 @@ class SageRuntime:
                 status="error",
                 result_plain="",
                 result_latex="",
+                result_data=None,
                 runtime_ms=runtime_ms,
                 stdout=stdout,
                 stderr=stderr,
@@ -224,6 +275,7 @@ class SageRuntime:
             status=status,
             result_plain=str(parsed.get("result_plain", "")),
             result_latex=str(parsed.get("result_latex", "")),
+            result_data=parsed.get("result_data"),
             runtime_ms=runtime_ms,
             stdout=str(parsed.get("stdout", "")),
             stderr=(f"{stderr}\n{parsed.get('traceback', '')}".strip() if parsed.get("traceback") else stderr),
@@ -231,8 +283,14 @@ class SageRuntime:
             exit_code=completed.returncode,
         )
 
-    def _build_docker_cmd(self, payload_json: str) -> list[str]:
+    def _build_docker_cmd(self, payload_json: str, source_file: Path) -> list[str]:
         cmd = ["docker", "run", "--rm"]
+        cmd.extend(
+            [
+                "--mount",
+                f"type=bind,src={source_file},dst={CONTAINER_SOURCE_FILE},readonly",
+            ]
+        )
 
         if self.config.entrypoint:
             cmd.extend(["--entrypoint", self.config.entrypoint])
@@ -272,6 +330,14 @@ class SageRuntime:
         return cmd
 
     def _runtime_exec_args(self, payload_json: str) -> list[str]:
+        """Launch the wrapper instead of the generated Sage file directly.
+
+        A direct ``sage -python generated_code.py`` call would execute the code,
+        but it would not give the host one stable JSON record with captured
+        stdout, traceback details, and the extracted ``RESULT`` value. The
+        wrapper runs the exact saved ``.py`` file and emits the marker line that
+        the host parser consumes.
+        """
         entry = self.config.entrypoint.rsplit("/", maxsplit=1)[-1].lower()
         if entry in {"bash", "sh"}:
             shell_flag = "-lc" if entry == "bash" else "-c"
@@ -291,6 +357,12 @@ class SageRuntime:
             return [shell_flag, shell_script, "_", SAGE_RUNNER_CODE, payload_json]
 
         return ["-python", "-c", SAGE_RUNNER_CODE, payload_json]
+
+    @staticmethod
+    def _write_source_file(code: str) -> Path:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".py", delete=False) as handle:
+            handle.write(code)
+            return Path(handle.name)
 
     @staticmethod
     def _parse_runner_output(stdout: str) -> dict[str, Any] | None:

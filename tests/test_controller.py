@@ -57,7 +57,7 @@ class AgentControllerTests(unittest.TestCase):
             client=client,
             model_name="fake",
             tool_registry=registry,
-            config=ControllerConfig(max_turns=3, temperature=0.0),
+            config=ControllerConfig(max_steps=3, temperature=0.0, require_successful_tool_call_for_final=False),
         )
         result = controller.solve("What is 2+2?")
 
@@ -65,6 +65,7 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "finalized")
         self.assertEqual(len(calls), 1)
         self.assertEqual(len(result.tool_traces), 1)
+        self.assertEqual(result.verified_sage_code, "")
 
     def test_invalid_model_output_returns_raw_text(self) -> None:
         client = _FakeClient(["The answer is approximately 10."])
@@ -72,7 +73,7 @@ class AgentControllerTests(unittest.TestCase):
             client=client,
             model_name="fake",
             tool_registry=ToolRegistry(),
-            config=ControllerConfig(max_turns=1, temperature=0.0),
+            config=ControllerConfig(max_steps=1, temperature=0.0),
         )
         result = controller.solve("Q")
 
@@ -111,7 +112,12 @@ class AgentControllerTests(unittest.TestCase):
             client=client,
             model_name="fake",
             tool_registry=registry,
-            config=ControllerConfig(max_turns=3, temperature=0.0, progress_logs=True),
+            config=ControllerConfig(
+                max_steps=3,
+                temperature=0.0,
+                progress_logs=True,
+                require_successful_tool_call_for_final=False,
+            ),
         )
 
         with patch("src.agent.controller.progress") as mocked_progress:
@@ -122,6 +128,186 @@ class AgentControllerTests(unittest.TestCase):
         self.assertTrue(any("model reply:" in message for message in messages))
         self.assertTrue(any("tool call: echo" in message for message in messages))
         self.assertTrue(any("tool result: echo" in message for message in messages))
+
+    def test_rejects_finalization_until_successful_sage_exec(self) -> None:
+        code = "RESULT = 2 + 2"
+        client = _FakeClient(
+            [
+                '{"answer": "Need verification", "tool_call": null}',
+                f'{{"answer": "Running Sage", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{code}"}}}}}}',
+                '{"answer": "4", "tool_call": null}',
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _sage_exec(args: dict[str, object]) -> ToolResult:
+            return ToolResult(ok=True, content="4", metadata={"status": "ok", "result_data": {"verified": True}})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="sage_exec", description="Execute Sage", input_schema={"type": "object"}),
+                handler=_sage_exec,
+            )
+        )
+
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(
+                max_steps=3,
+                require_successful_tool_call_for_final=True,
+                require_verification_for_final=True,
+            ),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.stop_reason, "finalized")
+        self.assertEqual(len(result.tool_traces), 1)
+        self.assertEqual(result.verified_sage_code, code)
+
+    def test_final_result_uses_last_successful_sage_code(self) -> None:
+        first_code = "RESULT = 2 + 2"
+        second_code = "RESULT = 3 + 3"
+        client = _FakeClient(
+            [
+                f'{{"answer": "First attempt", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{first_code}"}}}}}}',
+                f'{{"answer": "Second attempt", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{second_code}"}}}}}}',
+                '{"answer": "6", "tool_call": null}',
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _sage_exec(args: dict[str, object]) -> ToolResult:
+            code = args.get("code", "")
+            content = "6" if code == second_code else "4"
+            verified = code == second_code
+            return ToolResult(ok=True, content=content, metadata={"status": "ok", "result_data": {"verified": verified}})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="sage_exec", description="Execute Sage", input_schema={"type": "object"}),
+                handler=_sage_exec,
+            )
+        )
+
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(
+                max_steps=3,
+                require_successful_tool_call_for_final=True,
+                require_verification_for_final=True,
+            ),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "6")
+        self.assertEqual(result.stop_reason, "finalized")
+        self.assertEqual(result.verified_sage_code, second_code)
+
+    def test_rejects_finalization_when_last_successful_sage_result_is_not_verified(self) -> None:
+        code = "RESULT = {'verified': False}"
+        client = _FakeClient(
+            [
+                f'{{"answer": "Tried verification", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{code}"}}}}}}',
+                '{"answer": "Still done", "tool_call": null}',
+                '{"answer": "Out of steps", "tool_call": null}',
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _sage_exec(_: dict[str, object]) -> ToolResult:
+            return ToolResult(ok=True, content="{}", metadata={"status": "ok", "result_data": {"verified": False}})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="sage_exec", description="Execute Sage", input_schema={"type": "object"}),
+                handler=_sage_exec,
+            )
+        )
+
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(max_steps=3, require_verification_for_final=True),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.stop_reason, "max_steps_reached")
+        self.assertEqual(result.verified_sage_code, "")
+
+    def test_rejects_finalization_when_last_successful_sage_result_has_no_structured_verification(self) -> None:
+        code = "RESULT = 4"
+        client = _FakeClient(
+            [
+                f'{{"answer": "Computed something", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{code}"}}}}}}',
+                '{"answer": "Done now", "tool_call": null}',
+                '{"answer": "Out of steps", "tool_call": null}',
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _sage_exec(_: dict[str, object]) -> ToolResult:
+            return ToolResult(ok=True, content="4", metadata={"status": "ok", "result_data": None})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="sage_exec", description="Execute Sage", input_schema={"type": "object"}),
+                handler=_sage_exec,
+            )
+        )
+
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(max_steps=3, require_verification_for_final=True),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.stop_reason, "max_steps_reached")
+        self.assertEqual(result.verified_sage_code, "")
+
+    def test_accepts_finalization_when_last_successful_sage_result_is_verified(self) -> None:
+        code = "RESULT = {'verified': True, 'value': 4}"
+        client = _FakeClient(
+            [
+                f'{{"answer": "Verified", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{code}"}}}}}}',
+                '{"answer": "4", "tool_call": null}',
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _sage_exec(_: dict[str, object]) -> ToolResult:
+            return ToolResult(ok=True, content="4", metadata={"status": "ok", "result_data": {"verified": True, "value": 4}})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="sage_exec", description="Execute Sage", input_schema={"type": "object"}),
+                handler=_sage_exec,
+            )
+        )
+
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(max_steps=2, require_verification_for_final=True),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.stop_reason, "finalized")
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.verified_sage_code, code)
 
 
 if __name__ == "__main__":

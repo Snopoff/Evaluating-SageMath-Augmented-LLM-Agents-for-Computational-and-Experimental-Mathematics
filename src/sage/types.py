@@ -46,6 +46,8 @@ class ExecutionResult:
         status: Execution status such as ``ok``, ``error``, or ``timeout``.
         result_plain: Plain-text rendering of the computed result.
         result_latex: LaTeX rendering of the computed result.
+        result_data: JSON-friendly structured rendering of the computed result
+            when available.
         runtime_ms: End-to-end execution time in milliseconds.
         stdout: Captured stdout emitted by the Sage runner.
         stderr: Captured stderr emitted by Docker or the runner.
@@ -56,6 +58,7 @@ class ExecutionResult:
     status: str
     result_plain: str
     result_latex: str
+    result_data: object | None
     runtime_ms: int
     stdout: str
     stderr: str

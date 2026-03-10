@@ -1,8 +1,9 @@
+from datetime import datetime
 from pathlib import Path
 
 import hydra
-import rootutils
 import hydra.utils as hu
+import rootutils
 from omegaconf import DictConfig, OmegaConf
 
 from typing import Iterable
@@ -13,8 +14,17 @@ from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
 from src.sage.runtime import SageRuntime  # noqa: E402
 from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
 from src.tools.registry import ToolRegistry  # noqa: E402
-from src.utils.logging import setup_logging, progress, save_logs  # noqa: E402
+from src.utils.logging import setup_logging, progress  # noqa: E402
 from src.utils.config_helpers import resolve_prompt  # noqa: E402
+
+
+def _save_verified_sage_code(code: str) -> Path:
+    artifact_dir = Path(__file__).resolve().parent / "artifacts" / "verified_sage_code"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    artifact_path = artifact_dir / f"verified_{timestamp}.py"
+    artifact_path.write_text(code, encoding="utf-8")
+    return artifact_path
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="chat")
@@ -64,10 +74,16 @@ def main(cfg: DictConfig) -> None:
         prompt = resolve_prompt(cfg.prompt, progress_logs)
 
         result = controller.solve(prompt)
+        artifact_path: Path | None = None
+        if result.verified_sage_code.strip():
+            artifact_path = _save_verified_sage_code(result.verified_sage_code)
         if progress_logs:
             progress(f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
         print(result.final_answer)
-        save_logs("chat_logs")
+        if artifact_path is not None:
+            print()
+            print(f"Verified Sage code saved to: {artifact_path}")
+            print(result.verified_sage_code)
         return
 
     if mode == "benchmark":

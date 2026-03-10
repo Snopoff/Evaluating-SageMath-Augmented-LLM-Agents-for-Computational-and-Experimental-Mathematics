@@ -17,12 +17,18 @@ class ControllerConfig:
         temperature: Sampling temperature passed to the chat backend.
         progress_logs: Whether to emit controller progress messages.
         max_tool_calls: Maximum number of tool dispatches allowed per solve.
+        require_successful_tool_call_for_final: Whether a successful ``sage_exec``
+            call is required before the controller accepts finalization.
+        require_verification_for_final: Whether finalization requires an
+            explicitly verified successful ``sage_exec`` result.
     """
 
     max_steps: int = 6
     temperature: float = 0.0
     progress_logs: bool = False
     max_tool_calls: int = 4
+    require_successful_tool_call_for_final: bool = False
+    require_verification_for_final: bool = False
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any] | None) -> ControllerConfig:
@@ -32,6 +38,8 @@ class ControllerConfig:
             temperature=float(cfg_dict.get("temperature", 0.0)),
             progress_logs=bool(cfg_dict.get("progress_logs", False)),
             max_tool_calls=int(cfg_dict.get("max_tool_calls", 4)),
+            require_successful_tool_call_for_final=bool(cfg_dict.get("require_successful_tool_call_for_final", False)),
+            require_verification_for_final=bool(cfg_dict.get("require_verification_for_final", False)),
         )
 
 
@@ -44,12 +52,15 @@ class SolveResult:
         tool_traces: Per-tool execution records collected during the solve loop.
         turn_count: Number of model turns consumed.
         stop_reason: Terminal reason such as ``finalized`` or ``max_steps_reached``.
+        verified_sage_code: Exact successful ``sage_exec`` snippet used to verify
+            the finalized answer.
     """
 
     final_answer: str
     tool_traces: list[dict[str, Any]]
     turn_count: int
     stop_reason: str
+    verified_sage_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,7 +100,7 @@ class AgentController:
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
-            progress(f"[bold orange1]\[controller][/bold orange1] {message}")  # type: ignore because rich markup
+            progress(f"[bold orange1]\\[controller][/bold orange1] {message}")  # type: ignore because rich markup
 
     @staticmethod
     def _preview_text(text: str, max_chars: int = 240) -> str:
@@ -112,6 +123,18 @@ class AgentController:
             f"content={self._preview_text(str(trace.get('content', '')))}"
         )
 
+    @staticmethod
+    def _sage_trace_is_verified(trace: Mapping[str, Any] | None) -> bool:
+        if not isinstance(trace, Mapping):
+            return False
+        metadata = trace.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return False
+        result_data = metadata.get("result_data")
+        if not isinstance(result_data, Mapping):
+            return False
+        return result_data.get("verified") is True
+
     def solve(self, question: str) -> SolveResult:
         messages: list[dict[str, str]] = [
             {"role": "system", "content": self._system_prompt()},
@@ -119,6 +142,8 @@ class AgentController:
         ]
         tool_traces: list[dict[str, Any]] = []
         last_answer = ""
+        last_successful_sage_code = ""
+        last_successful_sage_trace: dict[str, Any] | None = None
 
         for turn_index in range(self.config.max_steps):
             self._progress(f"turn {turn_index + 1}/{self.config.max_steps}")
@@ -139,22 +164,48 @@ class AgentController:
                 last_answer = parsed.answer.strip()
 
             if parsed.tool_call is None:
+                if self.config.require_successful_tool_call_for_final and last_successful_sage_trace is None:
+                    self._progress("rejecting finalization without a successful sage_exec call")
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                'Do not finalize yet. Execute sage_exec again and only finalize after a successful verification '
+                                'result with RESULT["verified"] = True.'
+                            ),
+                        }
+                    )
+                    continue
+                if self.config.require_verification_for_final and not self._sage_trace_is_verified(last_successful_sage_trace):
+                    self._progress("rejecting finalization without an explicitly verified sage_exec result")
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                'Do not finalize yet. Execute sage_exec again and only finalize after a successful verification '
+                                'result with RESULT["verified"] = True.'
+                            ),
+                        }
+                    )
+                    continue
                 return SolveResult(
                     final_answer=parsed.answer.strip() or last_answer,
                     tool_traces=tool_traces,
                     turn_count=turn_index + 1,
                     stop_reason="finalized",
+                    verified_sage_code=last_successful_sage_code,
                 )
 
             if len(tool_traces) >= self.config.max_tool_calls:
-                messages.append({"role": "assistant", "content": raw})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": "Tool call limit reached. Return JSON with tool_call=null.",
-                    }
+                self._progress("tool call limit reached")
+                return SolveResult(
+                    final_answer=last_answer,
+                    tool_traces=tool_traces,
+                    turn_count=turn_index + 1,
+                    stop_reason="max_tool_calls_reached",
                 )
-                continue
 
             tool_name = parsed.tool_call.get("name")
             tool_args = parsed.tool_call.get("arguments", {})
@@ -183,6 +234,11 @@ class AgentController:
             }
             tool_traces.append(trace)
             self._log_tool_result(trace)
+            if tool_name_str == "sage_exec" and tool_result.ok:
+                last_successful_sage_trace = trace
+                code_value = tool_args_dict.get("code")
+                if isinstance(code_value, str) and code_value.strip():
+                    last_successful_sage_code = code_value
 
             messages.append({"role": "assistant", "content": raw})
             messages.append(
@@ -227,11 +283,22 @@ class AgentController:
         if not tool_lines:
             tool_lines = ["- (no tools registered)"]
 
+        verification_guardrail = ""
+        if self.config.require_verification_for_final:
+            verification_guardrail = (
+                'Do not return tool_call=null until you have a successful sage_exec call that verifies the answer.\n'
+                'When using Sage for verification, set RESULT["verified"] = True only if the candidate answer is actually verified; '
+                'otherwise set it to False.\n'
+            )
+        elif self.config.require_successful_tool_call_for_final:
+            verification_guardrail = "Do not return tool_call=null until you have a successful sage_exec call.\n"
+
         return (
             "You are a math research assistant. "
             "Reply with exactly one JSON object and no extra prose. "
             'Schema: {"answer": string, "tool_call": null | {"name": string, "arguments": object}}. '
             "Use tools only when needed for computation or verification.\n"
+            f"{verification_guardrail}"
             "Available tools:\n"
             f"{'\n'.join(tool_lines)}"
         )

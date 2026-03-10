@@ -1,5 +1,6 @@
-max_steps: 4
+max_steps: 30
 temperature: 0.0
 progress_logs: true
-max_tool_calls: 4
-min_required_tool_calls: 1
+max_tool_calls: 30
+require_successful_tool_call_for_final: true
+require_verification_for_final: true

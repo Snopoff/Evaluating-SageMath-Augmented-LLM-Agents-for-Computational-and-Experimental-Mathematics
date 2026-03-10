@@ -13,6 +13,7 @@ wheels/
 logs/
 *.log
 outputs/
+artifacts/
 
 # Data
 data/
@@ -25,4 +26,3 @@ data/
 
 # temp and draft files (and prompts temporarily too)
 drafts/
-prompts/

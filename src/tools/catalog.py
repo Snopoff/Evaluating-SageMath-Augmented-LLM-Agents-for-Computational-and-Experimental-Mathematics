@@ -41,6 +41,7 @@ def _run_sage_tool(
             "runtime_ms": result.runtime_ms,
             "stderr": result.stderr,
             "result_latex": result.result_latex,
+            "result_data": result.result_data,
         },
     )
 
