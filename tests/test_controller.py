@@ -1,18 +1,15 @@
-from __future__ import annotations
-
-import sys
 import types
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import rootutils
 
-from src.agent.controller import AgentController, ControllerConfig
-from src.tools.registry import ToolRegistry
-from src.tools.types import ToolDefinition, ToolResult, ToolSpec
+rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
+
+
+from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
+from src.tools.registry import ToolRegistry  # noqa: E402
+from src.tools.types import ToolDefinition, ToolResult, ToolSpec  # noqa: E402
 
 
 class _FakeCompletions:
@@ -83,10 +80,7 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "invalid_model_output")
 
     def test_multi_json_output_parses_first_object(self) -> None:
-        content = (
-            '{"answer": "ok", "tool_call": null}\n'
-            '{"answer": "ignored", "tool_call": null}'
-        )
+        content = '{"answer": "ok", "tool_call": null}\n{"answer": "ignored", "tool_call": null}'
         client = _FakeClient([content])
         controller = AgentController(client=client, model_name="fake", tool_registry=ToolRegistry())
         result = controller.solve("Q")

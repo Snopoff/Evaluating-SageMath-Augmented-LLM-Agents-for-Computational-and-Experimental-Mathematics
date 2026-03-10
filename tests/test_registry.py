@@ -1,15 +1,12 @@
-from __future__ import annotations
-
-import sys
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import rootutils
 
-from src.tools.registry import ToolRegistry
-from src.tools.types import ToolDefinition, ToolResult, ToolSpec
+rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
+
+
+from src.tools.registry import ToolRegistry  # noqa: E402
+from src.tools.types import ToolDefinition, ToolResult, ToolSpec  # noqa: E402
 
 
 class ToolRegistryTests(unittest.TestCase):

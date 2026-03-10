@@ -1,18 +1,15 @@
-from __future__ import annotations
-
 import json
 import subprocess
-import sys
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import rootutils
 
-from src.sage.runtime import SAGE_RUNNER_CODE, SageRuntime
-from src.sage.types import SageRuntimeConfig
+rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
+
+
+from src.sage.runtime import SAGE_RUNNER_CODE, SageRuntime  # noqa: E402
+from src.sage.types import SageRuntimeConfig  # noqa: E402
 
 
 class SageRuntimeTests(unittest.TestCase):

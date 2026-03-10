@@ -13,13 +13,13 @@ class ControllerConfig:
     """Runtime knobs for the tool-using chat loop.
 
     Args:
-        max_turns: Maximum number of model turns before stopping.
+        max_steps: Maximum number of model steps before stopping.
         temperature: Sampling temperature passed to the chat backend.
         progress_logs: Whether to emit controller progress messages.
         max_tool_calls: Maximum number of tool dispatches allowed per solve.
     """
 
-    max_turns: int = 6
+    max_steps: int = 6
     temperature: float = 0.0
     progress_logs: bool = False
     max_tool_calls: int = 4
@@ -28,7 +28,7 @@ class ControllerConfig:
     def from_config(cls, cfg: Mapping[str, Any] | None) -> ControllerConfig:
         cfg_dict = dict(cfg or {})
         return cls(
-            max_turns=int(cfg_dict.get("max_turns", 6)),
+            max_steps=int(cfg_dict.get("max_steps", 6)),
             temperature=float(cfg_dict.get("temperature", 0.0)),
             progress_logs=bool(cfg_dict.get("progress_logs", False)),
             max_tool_calls=int(cfg_dict.get("max_tool_calls", 4)),
@@ -43,7 +43,7 @@ class SolveResult:
         final_answer: Final answer returned to the caller.
         tool_traces: Per-tool execution records collected during the solve loop.
         turn_count: Number of model turns consumed.
-        stop_reason: Terminal reason such as ``finalized`` or ``max_turns_reached``.
+        stop_reason: Terminal reason such as ``finalized`` or ``max_steps_reached``.
     """
 
     final_answer: str
@@ -120,8 +120,8 @@ class AgentController:
         tool_traces: list[dict[str, Any]] = []
         last_answer = ""
 
-        for turn_index in range(self.config.max_turns):
-            self._progress(f"turn {turn_index + 1}/{self.config.max_turns}")
+        for turn_index in range(self.config.max_steps):
+            self._progress(f"turn {turn_index + 1}/{self.config.max_steps}")
             raw = self._chat_completion(messages)
             self._log_model_reply(raw)
             parsed = self._parse_turn(raw)
@@ -195,8 +195,8 @@ class AgentController:
         return SolveResult(
             final_answer=last_answer,
             tool_traces=tool_traces,
-            turn_count=self.config.max_turns,
-            stop_reason="max_turns_reached",
+            turn_count=self.config.max_steps,
+            stop_reason="max_steps_reached",
         )
 
     def _chat_completion(self, messages: list[dict[str, str]]) -> str:

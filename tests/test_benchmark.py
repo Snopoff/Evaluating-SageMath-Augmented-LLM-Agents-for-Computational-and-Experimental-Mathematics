@@ -1,18 +1,13 @@
-from __future__ import annotations
-
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
+import rootutils
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from llmxm2.agent.controller import SolveResult
-from llmxm2.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
+from src.agent.controller import SolveResult  # noqa: E402
+from src.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner  # noqa: E402
 
 
 class _FakeController:

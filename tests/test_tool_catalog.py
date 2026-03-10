@@ -1,15 +1,12 @@
-from __future__ import annotations
-
-import sys
 import types
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import rootutils
 
-from src.tools.catalog import make_sage_exec_tool
+rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
+
+
+from src.tools.catalog import make_sage_exec_tool  # noqa: E402
 
 
 class SageExecToolFactoryTests(unittest.TestCase):

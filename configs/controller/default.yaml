@@ -1,4 +1,4 @@
-max_turns: 4
+max_steps: 4
 temperature: 0.0
 progress_logs: true
 max_tool_calls: 4
