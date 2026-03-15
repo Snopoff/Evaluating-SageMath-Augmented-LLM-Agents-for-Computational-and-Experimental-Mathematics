@@ -13,6 +13,7 @@ wheels/
 #logs/
 *.log
 outputs/
+artifacts/
 
 # Data
 data/

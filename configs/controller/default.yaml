@@ -1,9 +1,6 @@
-max_turns: 3
+max_steps: 30
 temperature: 0.0
 progress_logs: true
-tool_use_mode: required #auto
-min_required_tool_calls: 1
-tool_budget:
-  max_calls: 8
-  max_cumulative_cpu_seconds: 45
-  max_cumulative_wall_seconds: 45
+max_tool_calls: 30
+require_successful_tool_call_for_final: true
+require_verification_for_final: true

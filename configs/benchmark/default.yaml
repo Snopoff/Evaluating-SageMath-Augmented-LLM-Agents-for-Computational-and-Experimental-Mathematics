@@ -1,3 +1,4 @@
+_target_: benchmark.run_realmath.BenchmarkConfig
 dataset_path: data/processed/realmathbenchmark_qa.jsonl
 output_dir: .
 limit: 25
@@ -8,3 +9,4 @@ id_field: id
 predictions_file: predictions.jsonl
 tool_traces_file: tool_traces.jsonl
 metrics_file: metrics.json
+symbolic_timeout_sec: 8

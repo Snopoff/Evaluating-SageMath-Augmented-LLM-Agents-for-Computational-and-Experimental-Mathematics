@@ -1,0 +1,12 @@
+defaults:
+  - provider: openai
+  - model: openai
+  - controller: default
+  - sage: default
+  - prompt: frontiermath_degree19 #transformer
+  - _self_
+
+mode: chat
+progress_logs: true
+tools:
+  - sage_exec

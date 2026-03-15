@@ -1,9 +1,0 @@
-max_turns: 20 #30
-temperature: 0.0
-progress_logs: true
-tool_use_mode: required
-min_required_tool_calls: 2
-tool_budget:
-  max_calls: 20 #20
-  max_cumulative_cpu_seconds: 600
-  max_cumulative_wall_seconds: 600

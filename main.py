@@ -1,109 +1,104 @@
-import json
-import logging
-import rootutils
+from datetime import datetime
 from pathlib import Path
 
 import hydra
-from hydra.utils import instantiate, to_absolute_path
+import hydra.utils as hu
+import rootutils
 from omegaconf import DictConfig, OmegaConf
+
+from typing import Iterable
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.llmxm2.agent.controller import AgentController, ControllerConfig
-from src.llmxm2.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
-from src.llmxm2.mcp.client import InProcessSageToolClient
-from src.llmxm2.mcp.sage_server import SageMCPService, run_mcp_server
+from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
+from src.sage.runtime import SageRuntime  # noqa: E402
+from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
+from src.tools.registry import ToolRegistry  # noqa: E402
+from src.utils.logging import setup_logging, progress  # noqa: E402
+from src.utils.config_helpers import resolve_prompt  # noqa: E402
 
 
-def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+def _save_verified_sage_code(code: str) -> Path:
+    artifact_dir = Path(__file__).resolve().parent / "artifacts" / "verified_sage_code"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    artifact_path = artifact_dir / f"verified_{timestamp}.py"
+    artifact_path.write_text(code, encoding="utf-8")
+    return artifact_path
 
 
-def _progress(enabled: bool, message: str) -> None:
-    if enabled:
-        print(f"[progress] {message}", flush=True)
-
-
-@hydra.main(version_base=None, config_path="configs", config_name="default")
+@hydra.main(version_base=None, config_path="configs", config_name="chat")
 def main(cfg: DictConfig) -> None:
-    _setup_logging()
+    setup_logging()
 
     mode = str(cfg.get("mode", "chat"))
     progress_logs = bool(cfg.get("progress_logs", True))
-    _progress(progress_logs, f"starting main (mode={mode})")
+    if progress_logs:
+        progress(f"starting main (mode={mode})")
 
-    #! `from_config` -> `hu.instantiate`
-    # * ======
-    mcp_cfg = OmegaConf.to_container(cfg.mcp, resolve=True)
-    if not isinstance(mcp_cfg, dict):
-        raise ValueError("Config 'mcp' must be a mapping.")
+    client = hu.instantiate(cfg.provider.client)
 
-    mcp_cfg.setdefault("progress_logs", progress_logs)
-    _progress(progress_logs, "initializing Sage MCP service")
-    service = SageMCPService.from_config(mcp_cfg)
-    _progress(progress_logs, "Sage MCP service ready")
-    # * ======
+    sage_cfg = OmegaConf.to_container(cfg.sage, resolve=True)
+    if not isinstance(sage_cfg, dict):
+        raise ValueError("Config 'sage' must be a mapping.")
+    runtime = SageRuntime.from_config(sage_cfg)  # type: ignore
 
-    if mode == "serve_mcp":
-        transport = str(cfg.mcp.server.transport)
-        _progress(progress_logs, f"serving MCP over transport={transport}")
-        run_mcp_server(service, transport=transport)
-        return
+    tool_names = cfg.get("tools", [])
+    if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):
+        raise ValueError("Config 'tools' must be a list of tool names.")
 
-    _progress(progress_logs, "initializing model client")
-    client = instantiate(cfg.provider.client)
+    tools = ToolRegistry()
+    available_names = sorted(AVAILABLE_TOOLS)
+    for tool_name in tool_names:
+        factory = AVAILABLE_TOOLS.get(tool_name)
+        if factory is None:
+            available_text = ", ".join(available_names) if available_names else "(none)"
+            raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
+        tools.register(factory(runtime))
 
-    #! `from_config` -> `hu.instantiate`
-    # * ======
-    controller_cfg = ControllerConfig.from_config(OmegaConf.to_container(cfg.controller, resolve=True))
-    tool_client = InProcessSageToolClient(service=service)
+    if progress_logs:
+        progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
+
+    controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
+    if not isinstance(controller_cfg, dict):
+        raise ValueError("Config 'controller' must be a mapping.")
 
     controller = AgentController(
         client=client,
         model_name=str(cfg.model.name),
-        tool_client=tool_client,
-        config=controller_cfg,
+        tool_registry=tools,
+        config=ControllerConfig.from_config(controller_cfg),  # type: ignore
     )
-    _progress(progress_logs, f"controller ready (model={cfg.model.name})")
-    # * ======
 
     if mode == "chat":
-        prompt = str(cfg.get("prompt", ""))
-        prompt_file = cfg.get("prompt_file")
-        if prompt_file is not None and str(prompt_file):
-            prompt_path = Path(to_absolute_path(str(prompt_file)))
-            _progress(progress_logs, f"loading prompt from file: {prompt_path}")
-            prompt = prompt_path.read_text(encoding="utf-8").strip()
-        _progress(progress_logs, f"starting chat solve (prompt_chars={len(prompt)})")
+        prompt = resolve_prompt(cfg.prompt, progress_logs)
+
         result = controller.solve(prompt)
-        _progress(
-            progress_logs,
-            f"chat solve completed (stop_reason={result.stop_reason}, turns={result.turn_count})",
-        )
+        artifact_path: Path | None = None
+        if result.verified_sage_code.strip():
+            artifact_path = _save_verified_sage_code(result.verified_sage_code)
+        if progress_logs:
+            progress(f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
         print(result.final_answer)
+        if artifact_path is not None:
+            print()
+            print(f"Verified Sage code saved to: {artifact_path}")
+            print(result.verified_sage_code)
         return
 
     if mode == "benchmark":
-        bench_cfg_raw = OmegaConf.to_container(cfg.benchmark, resolve=True)
-        if not isinstance(bench_cfg_raw, dict):
+        bench_cfg = OmegaConf.to_container(cfg.benchmark, resolve=True)
+        if not isinstance(bench_cfg, dict):
             raise ValueError("Config 'benchmark' must be a mapping.")
 
-        dataset_path = Path(to_absolute_path(str(cfg.benchmark.dataset_path)))
-        benchmark_cfg = BenchmarkConfig.from_config(bench_cfg_raw, dataset_path=dataset_path)
-        _progress(
-            progress_logs,
-            f"starting benchmark (dataset={dataset_path}, limit={benchmark_cfg.limit})",
-        )
-        runner = RealMathBenchmarkRunner(controller=controller, tool_client=tool_client, config=benchmark_cfg)
-        metrics = runner.run()
-        _progress(progress_logs, "benchmark completed")
-        print(json.dumps(metrics, indent=2, ensure_ascii=False))
+        dataset_path = Path(hu.to_absolute_path(str(cfg.benchmark.dataset_path)))
+        benchmark_cfg = hu.instantiate(cfg.benchmark, dataset_path=dataset_path)
+        # runner = hu.instantiate(cfg.benchmark.runner, controller=controller, config=benchmark_cfg, sage_runtime=runtime)
+        # metrics = runner.run()
+        # print(json.dumps(metrics, indent=2, ensure_ascii=False))
         return
 
-    raise ValueError(f"Unsupported mode: {mode!r}")
+    raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat' or 'benchmark'.")
 
 
 if __name__ == "__main__":

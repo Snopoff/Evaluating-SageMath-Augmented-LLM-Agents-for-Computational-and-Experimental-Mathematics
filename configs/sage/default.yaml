@@ -1,0 +1,11 @@
+image: ${oc.env:SAGEMATH_IMAGE,"docker.io/sagemath/sagemath:latest"}
+platform: ${oc.env:SAGEMATH_PLATFORM,"linux/amd64"}
+
+cpus: 1.0
+memory: "1g"
+pids_limit: 128
+
+wall_timeout_sec: 8
+cpu_limit_sec: 5
+output_max_bytes: 262144
+progress_logs: ${progress_logs}

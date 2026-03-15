@@ -1,18 +1,13 @@
-from __future__ import annotations
-
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
+import rootutils
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from llmxm2.agent.controller import SolveResult
-from llmxm2.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner
+from src.agent.controller import SolveResult  # noqa: E402
+from src.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner  # noqa: E402
 
 
 class _FakeController:
@@ -26,18 +21,6 @@ class _FakeController:
             turn_count=1,
             stop_reason="finalized",
         )
-
-
-class _FakeToolClient:
-    def sage_eval(self, payload: dict[str, object]) -> dict[str, object]:  # noqa: ARG002
-        return {
-            "status": "error",
-            "result_plain": "",
-            "result_latex": "",
-            "runtime_ms": 0,
-            "error_code": "EXEC_ERROR",
-            "complexity_report": {"features": {}, "policy_decision": "deny", "reason": "n/a"},
-        }
 
 
 class BenchmarkRunnerTests(unittest.TestCase):
@@ -67,7 +50,6 @@ class BenchmarkRunnerTests(unittest.TestCase):
             )
             runner = RealMathBenchmarkRunner(
                 controller=_FakeController("4"),
-                tool_client=_FakeToolClient(),
                 config=config,
             )
 
