@@ -10,7 +10,7 @@ wheels/
 .venv
 
 # Logs
-logs/
+#logs/
 *.log
 outputs/
 artifacts/
@@ -25,5 +25,5 @@ data/
 # Secrets
 .env
 
-# temp and draft files (and prompts temporarily too)
+# temp and draft files
 drafts/

@@ -1,0 +1,53 @@
+You are solving a conjecture-discovery task with a CAS tool.
+
+Goal:
+Infer a closed formula for beta_{k,k+3}(J_T) for a tree T, in terms of vertex degrees.
+
+Required workflow:
+1. Use `sage_snippet` (not a fixed template) to write and run full Sage code yourself.
+2. Do NOT spend turns on generic environment probing; start with a direct smoke test.
+3. Use this preferred extraction path first:
+   - build `J_T` in `R = PolynomialRing(QQ, x-vars + y-vars, order='degrevlex')`
+   - compute `GF = J_T.graded_free_resolution()`
+   - extract `beta_{k,k+3}` by `int(GF.betti(k).get(k+3, 0))`
+4. Run one smoke-test snippet for a single small tree to verify extraction works.
+5. Do NOT spend many turns on custom random-tree generation/debugging. After smoke test, switch to `sage_experiment` quickly.
+6. Stage A (mandatory, early): run `sage_experiment` with `template='tree_betti_kk3_cas'` on a small grid (within limits) to collect data.
+7. Infer a per-vertex candidate `f(d,k)` (because hypothesis_expr supports only `d`, `k`, `binomial`) by fitting a small basis.
+8. Use this basis for fitting/search:
+   - `binomial(d,k+1)`
+   - `k*binomial(d,k+1)`
+   - `binomial(d+1,k+2)`
+   - `k*binomial(d+1,k+2)`
+   - `binomial(d-1,k)`
+   - `binomial(d-1,k+1)`
+9. Stage B: validate candidate on unseen samples (different seed/range) with `sage_experiment`.
+10. Stage C (canonical check, mandatory): run one final `sage_experiment` with `template='tree_betti_kk3_cas'` and your final `hypothesis_expr`.
+11. Finalize only if Stage C reports `hypothesis_summary.all_match=true`.
+12. If mismatch appears, revise the formula and re-test.
+13. Return only the final formula.
+
+Tool payload guidance for `sage_snippet`:
+- operation: "sage_snippet"
+- args.code: full Python/Sage code string (Python-compatible syntax)
+- optional args.result_var: variable name to extract from snippet (default "RESULT")
+- optional args.include_locals: bool
+
+Snippet guidance:
+- Include your own imports and initialization (for example `from sage.all import *`).
+- Use Python-compatible Sage syntax (`**` for exponentiation; avoid `^`).
+- Always send real code in `args.code`; never send placeholders like `<<omitted:...>>`.
+- Keep `args` as an object and always include `args.code` for `sage_snippet`.
+- Avoid unsupported shorthand like `R.<x,y> = ...`; use `R = PolynomialRing(...)` and `R.gens()`.
+- Keep snippets minimal: smoke test + (optional) one fitting snippet only.
+- Prefer `sage_experiment` for data collection/validation instead of large custom loops.
+- Avoid fragile API calls (`graphs.Tree`, `Graphs.RandomTree`, `graphs.PruferTree`, etc.); if needed, use robust Sage basics only.
+- Do not end with “no closed formula exists”; this benchmark expects an explicit closed formula.
+- Put a structured dict in `RESULT`, for example:
+  `RESULT = {"records": [...], "hypothesis_summary": {...}}`
+- Keep snippets compact and purpose-specific (probe, smoke test, stage A, stage B).
+- Keep runtime small enough per call to fit the execution budget.
+
+Question:
+Let T be a tree with vertex set V(T) and let J_T be its corresponding binomial edge ideal.
+For a fixed integer k >= 2, express beta_{k,k+3}(J_T) in terms of the degrees of the vertices of T.
