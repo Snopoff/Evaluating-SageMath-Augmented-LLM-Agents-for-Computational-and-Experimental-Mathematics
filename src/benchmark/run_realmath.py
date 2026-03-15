@@ -101,10 +101,12 @@ class RealMathBenchmarkRunner:
         controller: AgentController,
         config: BenchmarkConfig,
         sage_runtime: SageRuntime | None = None,
+        logger: Any | None = None,
     ):
         self.controller = controller
         self.config = config
         self.sage_runtime = sage_runtime
+        self.logger = logger
 
     def run(self) -> dict[str, Any]:
         rows = list(self._iter_rows(self.config.dataset_path, self.config.limit))
@@ -190,6 +192,9 @@ class RealMathBenchmarkRunner:
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
+            if self.logger is not None:
+                self.logger.progress(f"[benchmark] {message}")
+                return
             print(f"[progress][benchmark] {message}", flush=True)
 
     @staticmethod

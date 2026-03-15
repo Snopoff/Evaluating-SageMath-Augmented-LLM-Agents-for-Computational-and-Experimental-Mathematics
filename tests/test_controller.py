@@ -1,6 +1,5 @@
 import types
 import unittest
-from unittest.mock import patch
 
 import rootutils
 
@@ -10,24 +9,40 @@ rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
 from src.tools.registry import ToolRegistry  # noqa: E402
 from src.tools.types import ToolDefinition, ToolResult, ToolSpec  # noqa: E402
+from src.utils.console_logging import ConsoleLogger  # noqa: E402
 
 
 class _FakeCompletions:
-    def __init__(self, outputs: list[str]):
+    def __init__(self, outputs: list[object]):
         self._outputs = list(outputs)
 
     def create(self, **_: object):
         if not self._outputs:
             raise RuntimeError("No more fake outputs available")
-        content = self._outputs.pop(0)
+        response_payload = self._outputs.pop(0)
+        usage = None
+        if isinstance(response_payload, tuple):
+            content, usage_payload = response_payload
+            usage = types.SimpleNamespace(**usage_payload)
+        else:
+            content = response_payload
         message = types.SimpleNamespace(content=content)
         choice = types.SimpleNamespace(message=message)
-        return types.SimpleNamespace(choices=[choice])
+        return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
 class _FakeClient:
     def __init__(self, outputs: list[str]):
         self.chat = types.SimpleNamespace(completions=_FakeCompletions(outputs))
+
+
+class _RecordingLogger(ConsoleLogger):
+    def __init__(self) -> None:
+        super().__init__(mode="test")
+        self.progress_messages: list[str] = []
+
+    def progress(self, message: str) -> None:
+        self.progress_messages.append(message)
 
 
 class AgentControllerTests(unittest.TestCase):
@@ -108,6 +123,7 @@ class AgentControllerTests(unittest.TestCase):
             )
         )
 
+        logger = _RecordingLogger()
         controller = AgentController(
             client=client,
             model_name="fake",
@@ -118,16 +134,74 @@ class AgentControllerTests(unittest.TestCase):
                 progress_logs=True,
                 require_successful_tool_call_for_final=False,
             ),
+            logger=logger,
         )
 
-        with patch("src.agent.controller.progress") as mocked_progress:
-            result = controller.solve("What is 2+2?")
-
+        result = controller.solve("What is 2+2?")
         self.assertEqual(result.final_answer, "4")
-        messages = [call.args[0] for call in mocked_progress.call_args_list]
+        messages = logger.progress_messages
         self.assertTrue(any("model reply:" in message for message in messages))
         self.assertTrue(any("tool call: echo" in message for message in messages))
         self.assertTrue(any("tool result: echo" in message for message in messages))
+
+    def test_logger_records_raw_messages_tool_payloads_and_verified_code(self) -> None:
+        code = "RESULT = {'verified': True, 'value': 4}"
+        first_response = f'{{"answer": "Verify it", "tool_call": {{"name": "sage_exec", "arguments": {{"code": "{code}"}}}}}}'
+        client = _FakeClient(
+            [
+                (first_response, {"prompt_tokens": 31, "completion_tokens": 9, "total_tokens": 40}),
+                ('{"answer": "4", "tool_call": null}', {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}),
+            ]
+        )
+        registry = ToolRegistry()
+
+        def _sage_exec(_: dict[str, object]) -> ToolResult:
+            return ToolResult(ok=True, content="4", metadata={"status": "ok", "result_data": {"verified": True, "value": 4}})
+
+        registry.register(
+            ToolDefinition(
+                spec=ToolSpec(name="sage_exec", description="Execute Sage", input_schema={"type": "object"}),
+                handler=_sage_exec,
+            )
+        )
+
+        logger = _RecordingLogger()
+        controller = AgentController(
+            client=client,
+            model_name="fake",
+            tool_registry=registry,
+            config=ControllerConfig(max_steps=2, require_verification_for_final=True),
+            logger=logger,
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.stop_reason, "finalized")
+        self.assertEqual(logger.run_metadata["question"], "Q")
+        self.assertIn("system_prompt", logger.run_metadata)
+
+        model_events = [event for event in logger.events if event["kind"] == "model_call"]
+        self.assertEqual(model_events[0]["payload"]["messages"][1]["content"], "Q")
+        self.assertEqual(model_events[0]["payload"]["raw_response"], first_response)
+        self.assertEqual(model_events[0]["payload"]["parsed_payload"]["tool_call"]["name"], "sage_exec")
+        self.assertEqual(model_events[0]["payload"]["token_usage"]["input_tokens"], 31)
+        self.assertEqual(model_events[0]["payload"]["token_usage"]["output_tokens"], 9)
+        self.assertEqual(model_events[0]["payload"]["token_usage"]["total_tokens"], 40)
+
+        tool_call_events = [event for event in logger.events if event["kind"] == "tool_call"]
+        self.assertEqual(tool_call_events[0]["payload"]["arguments"]["code"], code)
+
+        tool_result_events = [event for event in logger.events if event["kind"] == "tool_result"]
+        self.assertTrue(tool_result_events[0]["payload"]["ok"])
+        self.assertTrue(tool_result_events[0]["payload"]["metadata"]["result_data"]["verified"])
+
+        self.assertEqual(logger.run_metadata["agent_id"], "single_agent")
+        self.assertEqual(logger.run_metadata["agent_ids"], ["single_agent"])
+        self.assertEqual(logger.token_usage_totals["input_tokens"], 43)
+        self.assertEqual(logger.token_usage_totals["output_tokens"], 13)
+        self.assertEqual(logger.token_usage_totals["total_tokens"], 56)
+        self.assertEqual(logger.final_result["verified_sage_code"], code)
+        self.assertEqual(logger.final_results["single_agent"]["verified_sage_code"], code)
 
     def test_rejects_finalization_until_successful_sage_exec(self) -> None:
         code = "RESULT = 2 + 2"

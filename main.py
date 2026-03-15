@@ -14,7 +14,6 @@ from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
 from src.sage.runtime import SageRuntime  # noqa: E402
 from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
 from src.tools.registry import ToolRegistry  # noqa: E402
-from src.utils.logging import setup_logging, progress  # noqa: E402
 from src.utils.config_helpers import resolve_prompt  # noqa: E402
 
 
@@ -29,19 +28,19 @@ def _save_verified_sage_code(code: str) -> Path:
 
 @hydra.main(version_base=None, config_path="configs", config_name="chat")
 def main(cfg: DictConfig) -> None:
-    setup_logging()
-
     mode = str(cfg.get("mode", "chat"))
     progress_logs = bool(cfg.get("progress_logs", True))
+    logger = hu.instantiate(cfg.logger, mode=mode)
+    logger.setup_logging()
     if progress_logs:
-        progress(f"starting main (mode={mode})")
+        logger.progress(f"starting main (mode={mode})")
 
     client = hu.instantiate(cfg.provider.client)
 
     sage_cfg = OmegaConf.to_container(cfg.sage, resolve=True)
     if not isinstance(sage_cfg, dict):
         raise ValueError("Config 'sage' must be a mapping.")
-    runtime = SageRuntime.from_config(sage_cfg)  # type: ignore
+    runtime = SageRuntime.from_config(sage_cfg, logger=logger)  # type: ignore
 
     tool_names = cfg.get("tools", [])
     if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):
@@ -57,7 +56,7 @@ def main(cfg: DictConfig) -> None:
         tools.register(factory(runtime))
 
     if progress_logs:
-        progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
+        logger.progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
 
     controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
     if not isinstance(controller_cfg, dict):
@@ -68,23 +67,36 @@ def main(cfg: DictConfig) -> None:
         model_name=str(cfg.model.name),
         tool_registry=tools,
         config=ControllerConfig.from_config(controller_cfg),  # type: ignore
+        logger=logger,
     )
 
     if mode == "chat":
-        prompt = resolve_prompt(cfg.prompt, progress_logs)
+        prompt = resolve_prompt(cfg.prompt, logger=logger)
 
-        result = controller.solve(prompt)
-        artifact_path: Path | None = None
-        if result.verified_sage_code.strip():
-            artifact_path = _save_verified_sage_code(result.verified_sage_code)
-        if progress_logs:
-            progress(f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
-        print(result.final_answer)
-        if artifact_path is not None:
-            print()
-            print(f"Verified Sage code saved to: {artifact_path}")
-            print(result.verified_sage_code)
-        return
+        result = None
+        try:
+            result = controller.solve(prompt)
+            artifact_path: Path | None = None
+            if result.verified_sage_code.strip():
+                artifact_path = _save_verified_sage_code(result.verified_sage_code)
+                logger.log_artifact(
+                    name="verified_sage_code",
+                    path=artifact_path,
+                    artifact_type="sage-code",
+                    metadata={"mode": mode, "verified": True, "agent_id": controller.agent_id},
+                )
+            if progress_logs:
+                logger.progress(f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
+            print(result.final_answer)
+            if artifact_path is not None:
+                print()
+                print(f"Verified Sage code saved to: {artifact_path}")
+                print(result.verified_sage_code)
+            logger.finish_run(status=result.stop_reason)
+            return
+        except Exception:
+            logger.finish_run(status="failed")
+            raise
 
     if mode == "benchmark":
         bench_cfg = OmegaConf.to_container(cfg.benchmark, resolve=True)

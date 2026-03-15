@@ -1,0 +1,6 @@
+_target_: src.utils.wandb_logging.WandbWeaveLogger
+entity: ${oc.env:WANDB_ENTITY}
+project: ${oc.env:WANDB_PROJECT}
+run_name: null
+group: null
+tags: []

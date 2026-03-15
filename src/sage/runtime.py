@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from src.sage.types import ExecutionResult, SageRuntimeConfig
-from src.utils.logging import progress
+from src.utils.console_logging import ConsoleLogger
 
-CONTAINER_SOURCE_FILE = "/tmp/llmxm2_sage_exec.py"
+CONTAINER_SOURCE_FILE = "/tmp/llmxcas_sage_exec.py"
 
 SAGE_RUNNER_CODE = r"""
 import contextlib
@@ -127,13 +127,14 @@ class SageRuntime:
         config: Resolved Docker and execution limits for Sage runs.
     """
 
-    def __init__(self, config: SageRuntimeConfig):
+    def __init__(self, config: SageRuntimeConfig, logger: ConsoleLogger | None = None):
         if not config.image:
             raise ValueError("Sage runtime requires a Docker image.")
         self.config = config
+        self.logger = logger or ConsoleLogger()
 
     @classmethod
-    def from_config(cls, cfg: Mapping[str, Any]) -> SageRuntime:
+    def from_config(cls, cfg: Mapping[str, Any], logger: ConsoleLogger | None = None) -> SageRuntime:
         cfg_dict = dict(cfg)
         return cls(
             SageRuntimeConfig(
@@ -150,8 +151,14 @@ class SageRuntime:
                 home_dir=str(cfg_dict.get("home_dir", "/tmp")),
                 dot_sage_dir=str(cfg_dict.get("dot_sage_dir", "/tmp/.sage")),
                 progress_logs=bool(cfg_dict.get("progress_logs", False)),
-            )
+            ),
+            logger=logger,
         )
+
+    def _progress(self, message: str) -> None:
+        if not self.config.progress_logs:
+            return
+        self.logger.progress(message)
 
     def execute_sage_code(
         self,
@@ -237,9 +244,9 @@ class SageRuntime:
             )
 
         if self.config.progress_logs:
-            progress(f"Execution completed in {runtime_ms} ms with stdout: {stdout!r}...")
-            progress(f"Execution exit code: {completed.returncode}")
-            progress(f"Execution stderr: {stderr!r}")
+            self._progress(f"Execution completed in {runtime_ms} ms with stdout: {stdout!r}...")
+            self._progress(f"Execution exit code: {completed.returncode}")
+            self._progress(f"Execution stderr: {stderr!r}")
 
         parsed = self._parse_runner_output(stdout)
 

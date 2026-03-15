@@ -4,6 +4,7 @@ defaults:
   - controller: default
   - sage: default
   - benchmark: default
+  - logger: console
   - _self_
 
 mode: benchmark

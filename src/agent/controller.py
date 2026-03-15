@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 from src.tools.registry import ToolRegistry
-from src.utils.logging import progress
+from src.utils.console_logging import ConsoleLogger
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,14 @@ class ParsedTurn:
     tool_call: dict[str, Any] | None
 
 
+@dataclass(frozen=True)
+class ModelCallResult:
+    """Raw model response plus best-effort token usage metadata."""
+
+    raw_response: str
+    token_usage: dict[str, int | None]
+
+
 class AgentController:
     """Runs the iterative chat loop and dispatches tool calls.
 
@@ -84,6 +92,8 @@ class AgentController:
         model_name: Model identifier passed to the provider.
         tool_registry: Registry used to expose and dispatch tools.
         config: Optional controller configuration. Defaults to ``ControllerConfig()``.
+        logger: Optional experiment logger for recording progress and results.
+        agent_id: Optional identifier for the agent instance, used in logging.
     """
 
     def __init__(
@@ -92,15 +102,19 @@ class AgentController:
         model_name: str,
         tool_registry: ToolRegistry,
         config: ControllerConfig | None = None,
+        logger: ConsoleLogger | None = None,
+        agent_id: str = "single_agent",
     ) -> None:
         self.client = client
         self.model_name = model_name
         self.tool_registry = tool_registry
         self.config = config or ControllerConfig()
+        self.logger = logger or ConsoleLogger()
+        self.agent_id = agent_id.strip() or "single_agent"
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
-            progress(f"[bold orange1]\\[controller][/bold orange1] {message}")  # type: ignore because rich markup
+            self.logger.progress(f"[bold orange1]\\[controller][/bold orange1] {message}")  # type: ignore because rich markup
 
     @staticmethod
     def _preview_text(text: str, max_chars: int = 240) -> str:
@@ -136,10 +150,21 @@ class AgentController:
         return result_data.get("verified") is True
 
     def solve(self, question: str) -> SolveResult:
+        system_prompt = self._system_prompt()
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self._system_prompt()},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
         ]
+        self.logger.start_run(
+            metadata={
+                "agent_id": self.agent_id,
+                "question": question,
+                "system_prompt": system_prompt,
+                "model_name": self.model_name,
+                "controller_config": asdict(self.config),
+                "tool_specs": [asdict(spec) for spec in self.tool_registry.list_tools()],
+            }
+        )
         tool_traces: list[dict[str, Any]] = []
         last_answer = ""
         last_successful_sage_code = ""
@@ -147,17 +172,29 @@ class AgentController:
 
         for turn_index in range(self.config.max_steps):
             self._progress(f"turn {turn_index + 1}/{self.config.max_steps}")
-            raw = self._chat_completion(messages)
+            model_call = self._chat_completion(messages)
+            raw = model_call.raw_response
             self._log_model_reply(raw)
             parsed = self._parse_turn(raw)
+            self.logger.log_model_call(
+                agent_id=self.agent_id,
+                turn=turn_index + 1,
+                model_name=self.model_name,
+                messages=messages,
+                raw_response=raw,
+                parsed_payload=None if parsed is None else {"answer": parsed.answer, "tool_call": parsed.tool_call},
+                token_usage=model_call.token_usage,
+            )
             if parsed is None:
                 final = raw.strip() or last_answer
                 self._progress("model reply did not contain a valid JSON payload")
-                return SolveResult(
-                    final_answer=final,
-                    tool_traces=tool_traces,
-                    turn_count=turn_index + 1,
-                    stop_reason="invalid_model_output",
+                return self._record_solve_result(
+                    SolveResult(
+                        final_answer=final,
+                        tool_traces=tool_traces,
+                        turn_count=turn_index + 1,
+                        stop_reason="invalid_model_output",
+                    )
                 )
 
             if parsed.answer.strip():
@@ -171,7 +208,7 @@ class AgentController:
                         {
                             "role": "user",
                             "content": (
-                                'Do not finalize yet. Execute sage_exec again and only finalize after a successful verification '
+                                "Do not finalize yet. Execute sage_exec again and only finalize after a successful verification "
                                 'result with RESULT["verified"] = True.'
                             ),
                         }
@@ -184,27 +221,31 @@ class AgentController:
                         {
                             "role": "user",
                             "content": (
-                                'Do not finalize yet. Execute sage_exec again and only finalize after a successful verification '
+                                "Do not finalize yet. Execute sage_exec again and only finalize after a successful verification "
                                 'result with RESULT["verified"] = True.'
                             ),
                         }
                     )
                     continue
-                return SolveResult(
-                    final_answer=parsed.answer.strip() or last_answer,
-                    tool_traces=tool_traces,
-                    turn_count=turn_index + 1,
-                    stop_reason="finalized",
-                    verified_sage_code=last_successful_sage_code,
+                return self._record_solve_result(
+                    SolveResult(
+                        final_answer=parsed.answer.strip() or last_answer,
+                        tool_traces=tool_traces,
+                        turn_count=turn_index + 1,
+                        stop_reason="finalized",
+                        verified_sage_code=last_successful_sage_code,
+                    )
                 )
 
             if len(tool_traces) >= self.config.max_tool_calls:
                 self._progress("tool call limit reached")
-                return SolveResult(
-                    final_answer=last_answer,
-                    tool_traces=tool_traces,
-                    turn_count=turn_index + 1,
-                    stop_reason="max_tool_calls_reached",
+                return self._record_solve_result(
+                    SolveResult(
+                        final_answer=last_answer,
+                        tool_traces=tool_traces,
+                        turn_count=turn_index + 1,
+                        stop_reason="max_tool_calls_reached",
+                    )
                 )
 
             tool_name = parsed.tool_call.get("name")
@@ -223,6 +264,12 @@ class AgentController:
             tool_name_str = tool_name.strip()
             tool_args_dict = dict(tool_args)
             self._log_tool_call(tool_name_str, tool_args_dict)
+            self.logger.log_tool_call(
+                agent_id=self.agent_id,
+                turn=turn_index + 1,
+                tool_name=tool_name_str,
+                arguments=tool_args_dict,
+            )
             tool_result = self.tool_registry.execute(tool_name_str, tool_args_dict)
             trace = {
                 "turn": turn_index + 1,
@@ -234,6 +281,14 @@ class AgentController:
             }
             tool_traces.append(trace)
             self._log_tool_result(trace)
+            self.logger.log_tool_result(
+                agent_id=self.agent_id,
+                turn=turn_index + 1,
+                tool_name=tool_name_str,
+                ok=tool_result.ok,
+                content=tool_result.content,
+                metadata=tool_result.metadata,
+            )
             if tool_name_str == "sage_exec" and tool_result.ok:
                 last_successful_sage_trace = trace
                 code_value = tool_args_dict.get("code")
@@ -248,23 +303,37 @@ class AgentController:
                 }
             )
 
-        return SolveResult(
-            final_answer=last_answer,
-            tool_traces=tool_traces,
-            turn_count=self.config.max_steps,
-            stop_reason="max_steps_reached",
+        return self._record_solve_result(
+            SolveResult(
+                final_answer=last_answer,
+                tool_traces=tool_traces,
+                turn_count=self.config.max_steps,
+                stop_reason="max_steps_reached",
+            )
         )
 
-    def _chat_completion(self, messages: list[dict[str, str]]) -> str:
+    def _record_solve_result(self, result: SolveResult) -> SolveResult:
+        self.logger.log_solve_result(
+            agent_id=self.agent_id,
+            final_answer=result.final_answer,
+            turn_count=result.turn_count,
+            stop_reason=result.stop_reason,
+            tool_traces=result.tool_traces,
+            verified_sage_code=result.verified_sage_code,
+        )
+        return result
+
+    def _chat_completion(self, messages: list[dict[str, str]]) -> ModelCallResult:
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=messages,
             temperature=self.config.temperature,
         )
         content = response.choices[0].message.content
+        token_usage = self._extract_token_usage(response)
 
         if isinstance(content, str):
-            return content
+            return ModelCallResult(raw_response=content, token_usage=token_usage)
         if isinstance(content, list):
             parts: list[str] = []
             for item in content:
@@ -272,8 +341,48 @@ class AgentController:
                     text_value = item.get("text")
                     if isinstance(text_value, str):
                         parts.append(text_value)
-            return "\n".join(parts)
-        return str(content)
+            return ModelCallResult(raw_response="\n".join(parts), token_usage=token_usage)
+        return ModelCallResult(raw_response=str(content), token_usage=token_usage)
+
+    @classmethod
+    def _extract_token_usage(cls, response: Any) -> dict[str, int | None]:
+        usage = cls._read_value(response, "usage")
+        input_tokens = cls._read_int(usage, "input_tokens")
+        if input_tokens is None:
+            input_tokens = cls._read_int(usage, "prompt_tokens")
+
+        output_tokens = cls._read_int(usage, "output_tokens")
+        if output_tokens is None:
+            output_tokens = cls._read_int(usage, "completion_tokens")
+
+        total_tokens = cls._read_int(usage, "total_tokens")
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    @staticmethod
+    def _read_value(value: Any, key: str) -> Any:
+        if isinstance(value, Mapping):
+            return value.get(key)
+        return getattr(value, key, None)
+
+    @classmethod
+    def _read_int(cls, value: Any, key: str) -> int | None:
+        candidate = cls._read_value(value, key)
+        if candidate is None:
+            return None
+        if isinstance(candidate, bool):
+            return int(candidate)
+        if isinstance(candidate, int):
+            return candidate
+        if isinstance(candidate, float):
+            return int(candidate)
+        return None
 
     def _system_prompt(self) -> str:
         tool_lines: list[str] = []
@@ -286,9 +395,9 @@ class AgentController:
         verification_guardrail = ""
         if self.config.require_verification_for_final:
             verification_guardrail = (
-                'Do not return tool_call=null until you have a successful sage_exec call that verifies the answer.\n'
+                "Do not return tool_call=null until you have a successful sage_exec call that verifies the answer.\n"
                 'When using Sage for verification, set RESULT["verified"] = True only if the candidate answer is actually verified; '
-                'otherwise set it to False.\n'
+                "otherwise set it to False.\n"
             )
         elif self.config.require_successful_tool_call_for_final:
             verification_guardrail = "Do not return tool_call=null until you have a successful sage_exec call.\n"

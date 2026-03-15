@@ -3,6 +3,7 @@ defaults:
   - model: openai
   - controller: default
   - sage: default
+  - logger: wandb
   - prompt: frontiermath_degree19 #transformer
   - _self_
 

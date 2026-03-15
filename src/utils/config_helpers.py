@@ -4,10 +4,10 @@ import json
 import hydra.utils as hu
 from omegaconf import DictConfig, OmegaConf
 
-from src.utils.logging import progress
+from src.utils.console_logging import ConsoleLogger
 
 
-def resolve_prompt(prompt: DictConfig, progress_logs: bool) -> str:
+def resolve_prompt(prompt: DictConfig, logger: ConsoleLogger | None = None) -> str:
     text = OmegaConf.select(prompt, "text")
     file_value = OmegaConf.select(prompt, "file")
 
@@ -23,7 +23,7 @@ def resolve_prompt(prompt: DictConfig, progress_logs: bool) -> str:
         return text.strip()
 
     prompt_path = Path(hu.to_absolute_path(file_value))
-    if progress_logs:
-        progress(f"loading prompt from file: {prompt_path}")
+    if logger is not None:
+        logger.progress(f"loading prompt from file: {prompt_path}")
 
     return prompt_path.read_text(encoding="utf-8").strip()
