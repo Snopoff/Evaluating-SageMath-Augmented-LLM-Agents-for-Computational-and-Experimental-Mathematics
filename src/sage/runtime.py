@@ -169,6 +169,7 @@ class SageRuntime:
         return self._execute(code=code, result_var=result_var, timeout_sec=timeout_sec)
 
     def _execute(self, code: str, result_var: str, timeout_sec: float | None = None) -> ExecutionResult:
+        """Executes the given Sage code in a Docker container and returns the result along with execution details."""
         try:
             source_file = self._write_source_file(code)
         except OSError as exc:
@@ -230,6 +231,7 @@ class SageRuntime:
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
 
+        # Guard against excessively large outputs that could cause issues for the host process.
         if len(stdout.encode("utf-8")) > self.config.output_max_bytes:
             return ExecutionResult(
                 status="error",
@@ -291,6 +293,12 @@ class SageRuntime:
         )
 
     def _build_docker_cmd(self, payload_json: str, source_file: Path) -> list[str]:
+        """Builds the Docker command to execute the Sage code with the specified constraints and environment.
+
+        Parameters:
+            payload_json: The JSON string containing execution details to pass to the runner.
+            source_file: The path to the temporary file containing the Sage code to execute.
+        """
         cmd = ["docker", "run", "--rm"]
         cmd.extend(
             [
