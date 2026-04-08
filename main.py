@@ -14,7 +14,7 @@ from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
 from src.sage.runtime import SageRuntime  # noqa: E402
 from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
 from src.tools.registry import ToolRegistry  # noqa: E402
-from src.utils.config_helpers import resolve_prompt  # noqa: E402
+from src.utils.config_helpers import resolve_prompt, resolve_text_asset  # noqa: E402
 
 
 def _save_verified_sage_code(code: str) -> Path:
@@ -46,6 +46,10 @@ def main(cfg: DictConfig) -> None:
     if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):
         raise ValueError("Config 'tools' must be a list of tool names.")
 
+    sage_usage_notes = ""
+    if "sage_exec" in tool_names and cfg.get("sage_skill") is not None:
+        sage_usage_notes = resolve_text_asset(cfg.sage_skill, label="sage_skill", logger=logger)
+
     tools = ToolRegistry()
     available_names = sorted(AVAILABLE_TOOLS)
     for tool_name in tool_names:
@@ -53,7 +57,8 @@ def main(cfg: DictConfig) -> None:
         if factory is None:
             available_text = ", ".join(available_names) if available_names else "(none)"
             raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
-        tools.register(factory(runtime))
+        usage_notes = sage_usage_notes if tool_name == "sage_exec" else ""
+        tools.register(factory(runtime, usage_notes))
 
     if progress_logs:
         logger.progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")

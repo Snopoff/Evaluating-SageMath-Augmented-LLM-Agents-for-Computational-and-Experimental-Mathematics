@@ -1,10 +1,11 @@
 defaults:
-  - provider: openai
-  - model: openai
+  - provider: ollama #openai
+  - model: qwen3_4b_thinking #openai
   - controller: default
   - sage: default
   - logger: wandb
   - prompt: frontiermath_degree19 #transformer
+  - sage_skill: v1
   - _self_
 
 mode: chat

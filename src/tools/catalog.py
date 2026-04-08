@@ -1,5 +1,6 @@
 from typing import Any, Callable
 
+from src.agent.verification import normalize_verification_payload
 from src.sage.runtime import SageRuntime
 from src.tools.types import ToolDefinition, ToolResult, ToolSpec
 
@@ -33,20 +34,24 @@ def _run_sage_tool(
     if result.status != "ok":
         content = result.error or result.stderr.strip() or "Sage execution failed"
 
+    verification = normalize_verification_payload(result.result_data)
+
     return ToolResult(
         ok=result.status == "ok",
         content=content,
         metadata={
             "status": result.status,
+            "error_kind": getattr(result, "error_kind", ""),
             "runtime_ms": result.runtime_ms,
             "stderr": result.stderr,
             "result_latex": result.result_latex,
             "result_data": result.result_data,
+            "verification": verification,
         },
     )
 
 
-def make_sage_exec_tool(runtime: SageRuntime) -> ToolDefinition:
+def make_sage_exec_tool(runtime: SageRuntime, usage_notes: str = "") -> ToolDefinition:
     def _sage_exec_handler(arguments: dict[str, Any]) -> ToolResult:
         code = arguments.get("code")
         if not isinstance(code, str) or not code.strip():
@@ -71,11 +76,12 @@ def make_sage_exec_tool(runtime: SageRuntime) -> ToolDefinition:
             name="sage_exec",
             description="Execute raw Sage code inside Docker.",
             input_schema=dict(_SAGE_EXEC_SCHEMA),
+            usage_notes=usage_notes.strip(),
         ),
         handler=_sage_exec_handler,
     )
 
 
-AVAILABLE_TOOLS: dict[str, Callable[[SageRuntime], ToolDefinition]] = {
+AVAILABLE_TOOLS: dict[str, Callable[[SageRuntime, str], ToolDefinition]] = {
     "sage_exec": make_sage_exec_tool,
 }

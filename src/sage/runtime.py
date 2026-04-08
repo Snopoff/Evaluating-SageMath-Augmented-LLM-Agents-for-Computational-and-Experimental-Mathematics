@@ -182,6 +182,7 @@ class SageRuntime:
                 stdout="",
                 stderr="",
                 error=f"Failed to write Sage source file: {exc}",
+                error_kind="docker_error",
             )
 
         payload_json = json.dumps({"source_file": CONTAINER_SOURCE_FILE, "result_var": result_var}, ensure_ascii=True)
@@ -208,6 +209,7 @@ class SageRuntime:
                 stdout="",
                 stderr="",
                 error="Execution timed out.",
+                error_kind="timeout",
             )
         except OSError as exc:
             runtime_ms = int((time.perf_counter() - started) * 1000)
@@ -220,6 +222,7 @@ class SageRuntime:
                 stdout="",
                 stderr="",
                 error=f"Failed to invoke docker: {exc}",
+                error_kind="docker_error",
             )
         finally:
             try:
@@ -242,6 +245,7 @@ class SageRuntime:
                 stdout="",
                 stderr=stderr,
                 error="Output exceeds output_max_bytes.",
+                error_kind="invalid_runner_output",
                 exit_code=completed.returncode,
             )
 
@@ -268,6 +272,7 @@ class SageRuntime:
                 stdout=stdout,
                 stderr=stderr,
                 error=error_msg,
+                error_kind=self._classify_missing_json_failure(stderr=stderr, exit_code=completed.returncode),
                 exit_code=completed.returncode,
             )
 
@@ -280,6 +285,13 @@ class SageRuntime:
             if not error:
                 error = stderr.strip() or f"Exit code {completed.returncode}"
 
+        error_kind = self._classify_parsed_failure(
+            status=status,
+            error=error,
+            stderr=stderr,
+            exit_code=completed.returncode,
+        )
+
         return ExecutionResult(
             status=status,
             result_plain=str(parsed.get("result_plain", "")),
@@ -289,6 +301,7 @@ class SageRuntime:
             stdout=str(parsed.get("stdout", "")),
             stderr=(f"{stderr}\n{parsed.get('traceback', '')}".strip() if parsed.get("traceback") else stderr),
             error=error,
+            error_kind=error_kind,
             exit_code=completed.returncode,
         )
 
@@ -406,3 +419,30 @@ class SageRuntime:
                 return payload
 
         return None
+
+    @staticmethod
+    def _classify_missing_json_failure(*, stderr: str, exit_code: int) -> str:
+        lowered = stderr.lower()
+        if "cannot connect to the docker daemon" in lowered or "pull access denied" in lowered:
+            return "docker_error"
+        if "illegal instruction" in lowered or exit_code in {132, 137, 139}:
+            return "runtime_crash"
+        if exit_code != 0:
+            return "runtime_crash"
+        return "invalid_runner_output"
+
+    @staticmethod
+    def _classify_parsed_failure(*, status: str, error: str, stderr: str, exit_code: int) -> str:
+        if status == "timeout":
+            return "timeout"
+        if status != "error":
+            return ""
+
+        lowered = f"{error}\n{stderr}".lower()
+        if "cannot connect to the docker daemon" in lowered or "pull access denied" in lowered:
+            return "docker_error"
+        if "illegal instruction" in lowered or exit_code in {132, 137, 139}:
+            return "runtime_crash"
+        if exit_code != 0 and not lowered.strip():
+            return "runtime_crash"
+        return "code_error"

@@ -4,6 +4,11 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
+from src.agent.verification import (
+    SolveContract,
+    normalize_solve_contract,
+    verification_satisfies_contract,
+)
 from src.tools.registry import ToolRegistry
 from src.utils.console_logging import ConsoleLogger
 
@@ -29,6 +34,8 @@ class ControllerConfig:
     max_tool_calls: int = 4
     require_successful_tool_call_for_final: bool = False
     require_verification_for_final: bool = False
+    extract_constraints_before_solve: bool = False
+    require_full_constraint_coverage: bool = False
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any] | None) -> ControllerConfig:
@@ -40,6 +47,8 @@ class ControllerConfig:
             max_tool_calls=int(cfg_dict.get("max_tool_calls", 4)),
             require_successful_tool_call_for_final=bool(cfg_dict.get("require_successful_tool_call_for_final", False)),
             require_verification_for_final=bool(cfg_dict.get("require_verification_for_final", False)),
+            extract_constraints_before_solve=bool(cfg_dict.get("extract_constraints_before_solve", False)),
+            require_full_constraint_coverage=bool(cfg_dict.get("require_full_constraint_coverage", False)),
         )
 
 
@@ -138,28 +147,91 @@ class AgentController:
         )
 
     @staticmethod
-    def _sage_trace_is_verified(trace: Mapping[str, Any] | None) -> bool:
+    def _trace_verification(trace: Mapping[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(trace, Mapping):
-            return False
+            return None
         metadata = trace.get("metadata")
         if not isinstance(metadata, Mapping):
-            return False
-        result_data = metadata.get("result_data")
-        if not isinstance(result_data, Mapping):
-            return False
-        return result_data.get("verified") is True
+            return None
+        verification = metadata.get("verification")
+        if not isinstance(verification, Mapping):
+            return None
+        return dict(verification)
 
-    def solve(self, question: str) -> SolveResult:
-        system_prompt = self._system_prompt()
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_prompt},
+    @staticmethod
+    def _answer_has_explicit_failure_language(answer: str) -> bool:
+        lowered = answer.lower()
+        failure_markers = (
+            "not satisfied",
+            "does not satisfy",
+            "constraint failed",
+            "constraint remains failed",
+            "failed verification",
+            "not verified",
+            "cannot verify",
+            "could not verify",
+            "unresolved",
+        )
+        return any(marker in lowered for marker in failure_markers)
+
+    def _extract_solve_contract(self, question: str) -> SolveContract | None:
+        extraction_prompt = (
+            "You extract hard constraints from user math tasks. "
+            "Reply with exactly one JSON object and no extra prose. "
+            'Schema: {"hard_constraints": [{"id": string, "text": string, "requires_cas": boolean}], '
+            '"required_outputs": [{"id": string, "text": string}]}. '
+            "List only explicit hard constraints and explicitly requested outputs."
+        )
+        messages = [
+            {"role": "system", "content": extraction_prompt},
             {"role": "user", "content": question},
         ]
+        model_call = self._chat_completion(messages)
+        payload = self._extract_json_payload(model_call.raw_response)
+        contract = normalize_solve_contract(payload)
+        if contract is None:
+            self._progress("constraint extraction did not yield a usable contract; continuing without explicit coverage")
+        else:
+            self._progress(
+                "extracted contract: "
+                f"{len(contract.hard_constraints)} hard constraints, {len(contract.required_outputs)} required outputs"
+            )
+        return contract
+
+    @staticmethod
+    def _build_contract_message(contract: SolveContract) -> str:
+        payload = json.dumps(contract.to_dict(), ensure_ascii=True)
+        return (
+            "Verification contract JSON:\n"
+            f"{payload}\n"
+            "When you use Sage for verification, put a verification envelope in RESULT under key "
+            '"verification" with keys summary, checks, and outputs. '
+            "Every hard constraint id must appear in checks, and every required output id must appear in outputs."
+        )
+
+    @staticmethod
+    def _build_verification_rejection_message(failures: list[str]) -> str:
+        details = "; ".join(failures[:6]) if failures else "verification is incomplete"
+        return (
+            "Do not finalize yet. The latest verification is insufficient because "
+            f"{details}. Execute sage_exec again and return RESULT['verification'] with full constraint coverage."
+        )
+
+    def solve(self, question: str) -> SolveResult:
+        solve_contract: SolveContract | None = None
+        if self.config.extract_constraints_before_solve:
+            solve_contract = self._extract_solve_contract(question)
+
+        system_prompt = self._system_prompt()
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
+        if solve_contract is not None:
+            messages.append({"role": "user", "content": self._build_contract_message(solve_contract)})
         self.logger.start_run(
             metadata={
                 "agent_id": self.agent_id,
                 "question": question,
                 "system_prompt": system_prompt,
+                "solve_contract": None if solve_contract is None else solve_contract.to_dict(),
                 "model_name": self.model_name,
                 "controller_config": asdict(self.config),
                 "tool_specs": [asdict(spec) for spec in self.tool_registry.list_tools()],
@@ -169,6 +241,8 @@ class AgentController:
         last_answer = ""
         last_successful_sage_code = ""
         last_successful_sage_trace: dict[str, Any] | None = None
+        last_successful_verification_code = ""
+        last_successful_verification_trace: dict[str, Any] | None = None
 
         for turn_index in range(self.config.max_steps):
             self._progress(f"turn {turn_index + 1}/{self.config.max_steps}")
@@ -207,25 +281,25 @@ class AgentController:
                     messages.append(
                         {
                             "role": "user",
-                            "content": (
-                                "Do not finalize yet. Execute sage_exec again and only finalize after a successful verification "
-                                'result with RESULT["verified"] = True.'
-                            ),
+                            "content": "Do not finalize yet. Execute sage_exec again before returning tool_call=null.",
                         }
                     )
                     continue
-                if self.config.require_verification_for_final and not self._sage_trace_is_verified(last_successful_sage_trace):
-                    self._progress("rejecting finalization without an explicitly verified sage_exec result")
-                    messages.append({"role": "assistant", "content": raw})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Do not finalize yet. Execute sage_exec again and only finalize after a successful verification "
-                                'result with RESULT["verified"] = True.'
-                            ),
-                        }
+                if self.config.require_verification_for_final:
+                    verification_ok, failures = verification_satisfies_contract(
+                        self._trace_verification(last_successful_verification_trace),
+                        solve_contract,
+                        require_full_coverage=self.config.require_full_constraint_coverage,
                     )
+                    if not verification_ok:
+                        self._progress("rejecting finalization without sufficient verification coverage")
+                        messages.append({"role": "assistant", "content": raw})
+                        messages.append({"role": "user", "content": self._build_verification_rejection_message(failures)})
+                        continue
+                if self._answer_has_explicit_failure_language(parsed.answer):
+                    self._progress("rejecting finalization because the answer text admits unresolved or failed constraints")
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": "Do not finalize with language that admits failed or unresolved constraints."})
                     continue
                 return self._record_solve_result(
                     SolveResult(
@@ -233,7 +307,7 @@ class AgentController:
                         tool_traces=tool_traces,
                         turn_count=turn_index + 1,
                         stop_reason="finalized",
-                        verified_sage_code=last_successful_sage_code,
+                        verified_sage_code=last_successful_verification_code or last_successful_sage_code,
                     )
                 )
 
@@ -294,12 +368,19 @@ class AgentController:
                 code_value = tool_args_dict.get("code")
                 if isinstance(code_value, str) and code_value.strip():
                     last_successful_sage_code = code_value
+                if self._trace_verification(trace) is not None:
+                    last_successful_verification_trace = trace
+                    last_successful_verification_code = code_value if isinstance(code_value, str) and code_value.strip() else ""
 
             messages.append({"role": "assistant", "content": raw})
             messages.append(
                 {
                     "role": "user",
-                    "content": (f"Tool result JSON:\n{json.dumps(trace, ensure_ascii=True)}\nIf you can finalize, return tool_call=null."),
+                    "content": (
+                        f"Tool result JSON:\n{json.dumps(trace, ensure_ascii=True)}\n"
+                        "Update your constraint coverage from this tool result. "
+                        "If you can finalize, return tool_call=null."
+                    ),
                 }
             )
 
@@ -388,6 +469,8 @@ class AgentController:
         tool_lines: list[str] = []
         for spec in self.tool_registry.list_tools():
             tool_lines.append(f"- {spec.name}: {spec.description}; schema={json.dumps(spec.input_schema, ensure_ascii=True)}")
+            if spec.usage_notes.strip():
+                tool_lines.append(f"  usage_notes: {spec.usage_notes.strip()}")
 
         if not tool_lines:
             tool_lines = ["- (no tools registered)"]
@@ -395,9 +478,9 @@ class AgentController:
         verification_guardrail = ""
         if self.config.require_verification_for_final:
             verification_guardrail = (
-                "Do not return tool_call=null until you have a successful sage_exec call that verifies the answer.\n"
-                'When using Sage for verification, set RESULT["verified"] = True only if the candidate answer is actually verified; '
-                "otherwise set it to False.\n"
+                "Do not return tool_call=null until you have a successful verification-capable tool result that covers the full contract.\n"
+                'When using Sage for verification, return RESULT["verification"] with keys summary, checks, and outputs.\n'
+                'Use summary="pass" only when every required hard constraint is satisfied and every required output is present.\n'
             )
         elif self.config.require_successful_tool_call_for_final:
             verification_guardrail = "Do not return tool_call=null until you have a successful sage_exec call.\n"

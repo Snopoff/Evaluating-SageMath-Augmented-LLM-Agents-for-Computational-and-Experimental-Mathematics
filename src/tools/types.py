@@ -10,11 +10,14 @@ class ToolSpec:
         name: Stable tool name used for registration and dispatch.
         description: Human-readable description shown to the model.
         input_schema: JSON-schema-like shape describing expected tool arguments.
+        usage_notes: Optional supplementary notes injected into the controller
+            prompt when the tool is available.
     """
 
     name: str
     description: str
     input_schema: dict[str, Any]
+    usage_notes: str = ""
 
 
 @dataclass(frozen=True)

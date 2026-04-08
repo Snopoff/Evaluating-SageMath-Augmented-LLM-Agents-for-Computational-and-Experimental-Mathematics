@@ -52,6 +52,8 @@ class ExecutionResult:
         stdout: Captured stdout emitted by the Sage runner.
         stderr: Captured stderr emitted by Docker or the runner.
         error: Human-readable error message when execution fails.
+        error_kind: Normalized failure class such as ``code_error`` or
+            ``runtime_crash``.
         exit_code: Optional process exit code from the Docker command.
     """
 
@@ -63,4 +65,5 @@ class ExecutionResult:
     stdout: str
     stderr: str
     error: str = ""
+    error_kind: str = ""
     exit_code: int | None = None

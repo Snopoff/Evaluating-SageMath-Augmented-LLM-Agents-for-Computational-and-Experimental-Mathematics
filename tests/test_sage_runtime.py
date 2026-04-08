@@ -47,6 +47,7 @@ class SageRuntimeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.result_plain, "4")
         self.assertEqual(result.result_data, {"verified": True})
+        self.assertEqual(result.error_kind, "")
         self.assertNotIn("input", mocked_run.call_args.kwargs)
 
     def test_timeout_maps_to_timeout_status(self) -> None:
@@ -56,6 +57,7 @@ class SageRuntimeTests(unittest.TestCase):
             result = runtime.execute_sage_code("RESULT=2+2")
 
         self.assertEqual(result.status, "timeout")
+        self.assertEqual(result.error_kind, "timeout")
 
     def test_platform_flag_included_when_configured(self) -> None:
         runtime = SageRuntime(
@@ -122,6 +124,21 @@ class SageRuntimeTests(unittest.TestCase):
             result = runtime.execute_sage_code("RESULT=2+2")
 
         self.assertIsNone(result.result_data)
+
+    def test_classifies_illegal_instruction_as_runtime_crash(self) -> None:
+        runtime = SageRuntime(SageRuntimeConfig(image="docker.io/sagemath/sagemath:latest"))
+
+        with patch("subprocess.run") as mocked_run:
+            mocked_run.return_value = subprocess.CompletedProcess(
+                args=["docker"],
+                returncode=132,
+                stdout="",
+                stderr="Illegal instruction",
+            )
+            result = runtime.execute_sage_code("RESULT=2+2")
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.error_kind, "runtime_crash")
 
     def test_runner_helper_preserves_plain_json_serializable_structure(self) -> None:
         to_result_data = self._load_to_result_data()

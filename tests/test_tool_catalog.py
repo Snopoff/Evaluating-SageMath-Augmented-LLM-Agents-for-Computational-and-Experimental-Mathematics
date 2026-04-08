@@ -12,11 +12,12 @@ from src.tools.catalog import make_sage_exec_tool  # noqa: E402
 class SageExecToolFactoryTests(unittest.TestCase):
     def test_tool_definition_exposes_expected_spec(self) -> None:
         runtime = types.SimpleNamespace()
-        tool = make_sage_exec_tool(runtime)
+        tool = make_sage_exec_tool(runtime, usage_notes="Use RESULT.")
 
         self.assertEqual(tool.spec.name, "sage_exec")
         self.assertEqual(tool.spec.description, "Execute raw Sage code inside Docker.")
         self.assertEqual(tool.spec.input_schema["required"], ["code"])
+        self.assertEqual(tool.spec.usage_notes, "Use RESULT.")
 
     def test_handler_rejects_missing_code(self) -> None:
         runtime = types.SimpleNamespace()
@@ -33,11 +34,12 @@ class SageExecToolFactoryTests(unittest.TestCase):
                 status="ok",
                 result_plain="4",
                 result_latex="4",
-                result_data={"verified": True},
+                result_data={"verification": {"summary": "pass", "checks": [{"id": "constraint_1", "status": "pass", "evidence": "ok"}], "outputs": {}}},
                 runtime_ms=12,
                 stdout="",
                 stderr="",
                 error="",
+                error_kind="",
             )
         )
         tool = make_sage_exec_tool(runtime)
@@ -48,7 +50,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
         self.assertEqual(result.content, "4")
         self.assertEqual(result.metadata["status"], "ok")
         self.assertEqual(result.metadata["result_latex"], "4")
-        self.assertEqual(result.metadata["result_data"], {"verified": True})
+        self.assertEqual(result.metadata["verification"]["summary"], "pass")
 
     def test_handler_maps_runtime_failure(self) -> None:
         runtime = types.SimpleNamespace(
@@ -61,6 +63,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
                 stdout="",
                 stderr="runtime stderr",
                 error="Execution timed out.",
+                error_kind="timeout",
             )
         )
         tool = make_sage_exec_tool(runtime)
@@ -70,6 +73,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.content, "Execution timed out.")
         self.assertEqual(result.metadata["status"], "timeout")
+        self.assertEqual(result.metadata["error_kind"], "timeout")
 
 
 if __name__ == "__main__":

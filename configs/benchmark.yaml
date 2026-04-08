@@ -5,6 +5,7 @@ defaults:
   - sage: default
   - benchmark: default
   - logger: console
+  - sage_skill: v1
   - _self_
 
 mode: benchmark
