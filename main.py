@@ -115,6 +115,15 @@ def main(cfg: DictConfig) -> None:
         # print(json.dumps(metrics, indent=2, ensure_ascii=False))
         return
 
+    if mode == "test":
+        print("Running in test mode: the agent execution is tested.")
+        result = client.chat.completions.create(
+            model=str(cfg.model.name),
+            messages=[{"role": "user", "content": "What is a transformer model in NLP?"}],
+        )
+        print(result)
+        return
+
     raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat' or 'benchmark'.")
 
 
