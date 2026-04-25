@@ -24,6 +24,15 @@ class _FakeController:
 
 
 class BenchmarkRunnerTests(unittest.TestCase):
+    def test_config_coerces_yaml_paths(self) -> None:
+        config = BenchmarkConfig(
+            dataset_path="data.jsonl",
+            output_dir="outputs",
+        )
+
+        self.assertEqual(config.dataset_path, Path("data.jsonl"))
+        self.assertEqual(config.output_dir, Path("outputs"))
+
     def test_smoke_writes_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

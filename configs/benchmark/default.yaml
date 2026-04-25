@@ -1,4 +1,4 @@
-_target_: benchmark.run_realmath.BenchmarkConfig
+_target_: src.benchmark.run_realmath.BenchmarkConfig
 dataset_path: data/processed/realmathbenchmark_qa.jsonl
 output_dir: .
 limit: 25

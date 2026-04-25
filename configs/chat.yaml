@@ -1,13 +1,14 @@
 defaults:
-  - provider: ollama #openai
-  - model: qwen3_4b_thinking #openai
+  - model: yandex #openai
   - controller: default
   - sage: default
   - logger: wandb
   - prompt: frontiermath_degree19 #transformer
+  - system_prompt: v1
   - sage_skill: v1
   - _self_
 
+model_name: gpt-oss-20b/latest #deepseek-v32/latest #qwen3:4b-thinking-2507-q4_K_M
 mode: chat
 progress_logs: true
 tools:

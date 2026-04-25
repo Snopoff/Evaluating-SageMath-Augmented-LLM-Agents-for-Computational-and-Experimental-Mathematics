@@ -51,6 +51,10 @@ class BenchmarkConfig:
     metrics_file: str = "metrics.json"
     symbolic_timeout_sec: float = 8.0
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dataset_path", Path(self.dataset_path))
+        object.__setattr__(self, "output_dir", Path(self.output_dir))
+
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], dataset_path: Path) -> BenchmarkConfig:
         cfg_dict = dict(cfg)

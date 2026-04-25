@@ -1,19 +1,17 @@
+import json
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
 import hydra
 import hydra.utils as hu
 import rootutils
 from omegaconf import DictConfig, OmegaConf
 
-from typing import Iterable
-
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
-from src.sage.runtime import SageRuntime  # noqa: E402
+from src.benchmark.run_realmath import RealMathBenchmarkRunner  # noqa: E402
 from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
-from src.tools.registry import ToolRegistry  # noqa: E402
 from src.utils.config_helpers import resolve_prompt, resolve_text_asset  # noqa: E402
 
 
@@ -35,12 +33,9 @@ def main(cfg: DictConfig) -> None:
     if progress_logs:
         logger.progress(f"starting main (mode={mode})")
 
-    client = hu.instantiate(cfg.provider.client)
+    model = hu.instantiate(cfg.model)
 
-    sage_cfg = OmegaConf.to_container(cfg.sage, resolve=True)
-    if not isinstance(sage_cfg, dict):
-        raise ValueError("Config 'sage' must be a mapping.")
-    runtime = SageRuntime.from_config(sage_cfg, logger=logger)  # type: ignore
+    runtime = hu.instantiate(cfg.sage, logger=logger)
 
     tool_names = cfg.get("tools", [])
     if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):
@@ -50,7 +45,11 @@ def main(cfg: DictConfig) -> None:
     if "sage_exec" in tool_names and cfg.get("sage_skill") is not None:
         sage_usage_notes = resolve_text_asset(cfg.sage_skill, label="sage_skill", logger=logger)
 
-    tools = ToolRegistry()
+    system_prompt = ""
+    if cfg.get("system_prompt") is not None:
+        system_prompt = resolve_text_asset(cfg.system_prompt, label="system_prompt", logger=logger)
+
+    tools = []
     available_names = sorted(AVAILABLE_TOOLS)
     for tool_name in tool_names:
         factory = AVAILABLE_TOOLS.get(tool_name)
@@ -58,22 +57,12 @@ def main(cfg: DictConfig) -> None:
             available_text = ", ".join(available_names) if available_names else "(none)"
             raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
         usage_notes = sage_usage_notes if tool_name == "sage_exec" else ""
-        tools.register(factory(runtime, usage_notes))
+        tools.append(factory(runtime, usage_notes))
 
     if progress_logs:
-        logger.progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools.list_tools())}[/bold orange1]")
+        logger.progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools)}[/bold orange1]")
 
-    controller_cfg = OmegaConf.to_container(cfg.controller, resolve=True)
-    if not isinstance(controller_cfg, dict):
-        raise ValueError("Config 'controller' must be a mapping.")
-
-    controller = AgentController(
-        client=client,
-        model_name=str(cfg.model.name),
-        tool_registry=tools,
-        config=ControllerConfig.from_config(controller_cfg),  # type: ignore
-        logger=logger,
-    )
+    controller = hu.instantiate(cfg.controller, model=model, tools=tools, logger=logger, system_prompt=system_prompt)
 
     if mode == "chat":
         prompt = resolve_prompt(cfg.prompt, logger=logger)
@@ -103,25 +92,31 @@ def main(cfg: DictConfig) -> None:
             logger.finish_run(status="failed")
             raise
 
-    if mode == "benchmark":
+    if mode == "benchmark":  # TODO: Check and (re)implement it; not used for now
         bench_cfg = OmegaConf.to_container(cfg.benchmark, resolve=True)
         if not isinstance(bench_cfg, dict):
             raise ValueError("Config 'benchmark' must be a mapping.")
 
         dataset_path = Path(hu.to_absolute_path(str(cfg.benchmark.dataset_path)))
         benchmark_cfg = hu.instantiate(cfg.benchmark, dataset_path=dataset_path)
-        # runner = hu.instantiate(cfg.benchmark.runner, controller=controller, config=benchmark_cfg, sage_runtime=runtime)
-        # metrics = runner.run()
-        # print(json.dumps(metrics, indent=2, ensure_ascii=False))
-        return
+        runner = RealMathBenchmarkRunner(
+            controller=controller,
+            config=benchmark_cfg,
+            sage_runtime=runtime,
+            logger=logger,
+        )
+        try:
+            metrics = runner.run()
+            print(json.dumps(metrics, indent=2, ensure_ascii=False))
+            logger.finish_run(status="completed")
+            return
+        except Exception:
+            logger.finish_run(status="failed")
+            raise
 
     if mode == "test":
         print("Running in test mode: the agent execution is tested.")
-        result = client.chat.completions.create(
-            model=str(cfg.model.name),
-            messages=[{"role": "user", "content": "What is a transformer model in NLP?"}],
-        )
-        print(result)
+        print(model.invoke("What is a transformer model in NLP?"))
         return
 
     raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat' or 'benchmark'.")

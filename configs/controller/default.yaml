@@ -1,8 +1,9 @@
-max_steps: 15
-temperature: 0.0
-progress_logs: true
-max_tool_calls: 30
-require_successful_tool_call_for_final: true
-require_verification_for_final: true
-extract_constraints_before_solve: true
-require_full_constraint_coverage: true
+_target_: src.agent.controller.AgentController
+config:
+  _target_: src.agent.controller.ControllerConfig
+  max_steps: 15
+  progress_logs: true
+  max_tool_calls: 30
+  require_successful_tool_call_for_final: false
+  require_verification_for_final: false
+  require_structured_final: true

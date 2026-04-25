@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+_target_: langchain_ollama.ChatOllama
+model: ${model_name} #qwen3:4b-thinking-2507-q4_K_M
+base_url: ${oc.env:OLLAMA_BASE_URL,http://127.0.0.1:11434}

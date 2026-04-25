@@ -1,1 +1,7 @@
-name: gpt-5.2
+defaults:
+  - base
+  - _self_
+
+_target_: langchain_openai.ChatOpenAI
+model: ${model_name}
+api_key: ${oc.env:OPENAI_API_KEY}

@@ -1,0 +1,8 @@
+defaults:
+  - base
+  - _self_
+
+_target_: langchain_openai.ChatOpenAI
+model: "gpt://${oc.env:YANDEX_FOLDER_ID}/${model_name}" #gpt-oss-20b/latest
+base_url: https://ai.api.cloud.yandex.net/v1
+api_key: ${oc.env:YANDEX_API_KEY}

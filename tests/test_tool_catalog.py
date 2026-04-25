@@ -2,33 +2,33 @@ import types
 import unittest
 
 import rootutils
+from langchain_core.messages import ToolMessage
+from pydantic import ValidationError
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
 
-from src.tools.catalog import make_sage_exec_tool  # noqa: E402
+from src.tools.catalog import FINAL_ANSWER_TOOL_NAME, SAGE_EXEC_TOOL_NAME, make_sage_exec_tool, make_submit_final_answer_tool  # noqa: E402
 
 
 class SageExecToolFactoryTests(unittest.TestCase):
-    def test_tool_definition_exposes_expected_spec(self) -> None:
+    def test_sage_exec_tool_exposes_langchain_metadata(self) -> None:
         runtime = types.SimpleNamespace()
-        tool = make_sage_exec_tool(runtime, usage_notes="Use RESULT.")
+        sage_tool = make_sage_exec_tool(runtime, usage_notes="Use RESULT.")
 
-        self.assertEqual(tool.spec.name, "sage_exec")
-        self.assertEqual(tool.spec.description, "Execute raw Sage code inside Docker.")
-        self.assertEqual(tool.spec.input_schema["required"], ["code"])
-        self.assertEqual(tool.spec.usage_notes, "Use RESULT.")
+        self.assertEqual(sage_tool.name, SAGE_EXEC_TOOL_NAME)
+        self.assertIn("Execute raw Sage code", sage_tool.description)
+        self.assertIn("Use RESULT.", sage_tool.description)
+        self.assertIn("code", sage_tool.args)
 
-    def test_handler_rejects_missing_code(self) -> None:
+    def test_sage_exec_tool_rejects_missing_code_by_schema(self) -> None:
         runtime = types.SimpleNamespace()
-        tool = make_sage_exec_tool(runtime)
+        sage_tool = make_sage_exec_tool(runtime)
 
-        result = tool.handler({})
+        with self.assertRaises(ValidationError):
+            sage_tool.invoke({})
 
-        self.assertFalse(result.ok)
-        self.assertIn("non-empty string", result.content)
-
-    def test_handler_maps_successful_runtime_result(self) -> None:
+    def test_sage_exec_tool_returns_tool_message_with_artifact(self) -> None:
         runtime = types.SimpleNamespace(
             execute_sage_code=lambda **_: types.SimpleNamespace(
                 status="ok",
@@ -42,17 +42,19 @@ class SageExecToolFactoryTests(unittest.TestCase):
                 error_kind="",
             )
         )
-        tool = make_sage_exec_tool(runtime)
+        sage_tool = make_sage_exec_tool(runtime)
 
-        result = tool.handler({"code": "RESULT = 2 + 2", "timeout_sec": 3})
+        result = sage_tool.invoke({"type": "tool_call", "id": "call_1", "name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2", "timeout_sec": 3}})
 
-        self.assertTrue(result.ok)
+        self.assertIsInstance(result, ToolMessage)
         self.assertEqual(result.content, "4")
-        self.assertEqual(result.metadata["status"], "ok")
-        self.assertEqual(result.metadata["result_latex"], "4")
-        self.assertEqual(result.metadata["verification"]["summary"], "pass")
+        self.assertTrue(result.artifact["ok"])
+        self.assertEqual(result.artifact["status"], "ok")
+        self.assertEqual(result.artifact["result_latex"], "4")
+        self.assertEqual(result.artifact["verification"]["summary"], "pass")
+        self.assertEqual(result.artifact["code"], "RESULT = 2 + 2")
 
-    def test_handler_maps_runtime_failure(self) -> None:
+    def test_sage_exec_tool_maps_runtime_failure(self) -> None:
         runtime = types.SimpleNamespace(
             execute_sage_code=lambda **_: types.SimpleNamespace(
                 status="timeout",
@@ -66,14 +68,21 @@ class SageExecToolFactoryTests(unittest.TestCase):
                 error_kind="timeout",
             )
         )
-        tool = make_sage_exec_tool(runtime)
+        sage_tool = make_sage_exec_tool(runtime)
 
-        result = tool.handler({"code": "sleep(10)"})
+        result = sage_tool.invoke({"type": "tool_call", "id": "call_1", "name": SAGE_EXEC_TOOL_NAME, "args": {"code": "sleep(10)"}})
 
-        self.assertFalse(result.ok)
         self.assertEqual(result.content, "Execution timed out.")
-        self.assertEqual(result.metadata["status"], "timeout")
-        self.assertEqual(result.metadata["error_kind"], "timeout")
+        self.assertFalse(result.artifact["ok"])
+        self.assertEqual(result.artifact["status"], "timeout")
+        self.assertEqual(result.artifact["error_kind"], "timeout")
+
+    def test_submit_final_answer_tool_exposes_schema(self) -> None:
+        final_tool = make_submit_final_answer_tool()
+
+        self.assertEqual(final_tool.name, FINAL_ANSWER_TOOL_NAME)
+        self.assertIn("final_answer", final_tool.args)
+        self.assertEqual(final_tool.invoke({"final_answer": "4"}), "4")
 
 
 if __name__ == "__main__":

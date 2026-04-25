@@ -1,14 +1,15 @@
 defaults:
-  - provider: openai
   - model: openai
   - controller: default
   - sage: default
   - benchmark: default
   - logger: console
+  - system_prompt: v1
   - sage_skill: v1
   - _self_
 
 mode: benchmark
+model_name: gpt-5.2
 progress_logs: true
 
 tools:

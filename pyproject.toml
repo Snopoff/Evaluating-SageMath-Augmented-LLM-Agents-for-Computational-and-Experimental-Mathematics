@@ -1,19 +1,32 @@
 [project]
-name = "llmxm2"
-version = "0.1.0"
-description = "Minimal LLM + Sage research skeleton"
+name = "Sagent"
+version = "0.2.0"
+description = "Minimalistic AI agent framework for your mathematical research."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    #* Hydra
     "hydra-core>=1.3.2",
+
+    #* LangChain
+    "langchain-anthropic>=1.2.0",
+    "langchain-core>=1.3.1",
+    "langchain-google-genai>=4.1.0",
+    "langchain-ollama>=1.1.0",
+    "langchain-openai>=1.2.0",
+
+    #* MLX (only for macOS)
     "mlx>=0.31.0; sys_platform == 'darwin'",
     "mlx-lm>=0.31.0; sys_platform == 'darwin'",
     "mlx-metal>=0.31.0; sys_platform == 'darwin'",
-    "openai>=2.20.0",
-    "rich>=14.3.3",
-    "rootutils>=1.0.7",
+
+    #* Logging
     "wandb>=0.22.0",
     "weave>=0.51.50",
+
+    #* Tools
+    "rich>=14.3.3",
+    "rootutils>=1.0.7",
 ]
 
 [dependency-groups]

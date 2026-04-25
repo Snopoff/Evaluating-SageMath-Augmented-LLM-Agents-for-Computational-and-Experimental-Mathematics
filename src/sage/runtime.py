@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from src.sage.types import ExecutionResult, SageRuntimeConfig
 from src.utils.console_logging import ConsoleLogger
@@ -132,28 +132,6 @@ class SageRuntime:
             raise ValueError("Sage runtime requires a Docker image.")
         self.config = config
         self.logger = logger or ConsoleLogger()
-
-    @classmethod
-    def from_config(cls, cfg: Mapping[str, Any], logger: ConsoleLogger | None = None) -> SageRuntime:
-        cfg_dict = dict(cfg)
-        return cls(
-            SageRuntimeConfig(
-                image=str(cfg_dict.get("image", "")),
-                platform=str(cfg_dict.get("platform", "")),
-                entrypoint=str(cfg_dict.get("entrypoint", "/bin/bash")),
-                cpus=float(cfg_dict.get("cpus", 1.0)),
-                memory=str(cfg_dict.get("memory", "1g")),
-                pids_limit=int(cfg_dict.get("pids_limit", 128)),
-                wall_timeout_sec=float(cfg_dict.get("wall_timeout_sec", 8.0)),
-                cpu_limit_sec=float(cfg_dict.get("cpu_limit_sec", 5.0)),
-                output_max_bytes=int(cfg_dict.get("output_max_bytes", 262_144)),
-                user=str(cfg_dict.get("user", "")),
-                home_dir=str(cfg_dict.get("home_dir", "/tmp")),
-                dot_sage_dir=str(cfg_dict.get("dot_sage_dir", "/tmp/.sage")),
-                progress_logs=bool(cfg_dict.get("progress_logs", False)),
-            ),
-            logger=logger,
-        )
 
     def _progress(self, message: str) -> None:
         if not self.config.progress_logs:
