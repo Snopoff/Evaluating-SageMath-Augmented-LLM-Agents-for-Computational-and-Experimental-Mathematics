@@ -49,56 +49,14 @@ docker pull "$SAGEMATH_IMAGE"
 
 ## Run
 
-Chat:
+In `configs/chat.yaml` select the proper model, prompt and other parameters, and run
 
-```bash
-uv run --env-file .env python main.py mode=chat model=openai
+```Makefile
+make run
 ```
 
-Benchmark:
+Equivalently, you can pass the arguments right in CLI
 
-```bash
-uv run --env-file .env python main.py mode=benchmark benchmark.limit=25
+```Makefile
+make run model=openai
 ```
-
-## Hydra Construction
-
-Models, the Sage runtime, and the controller are instantiated directly through Hydra in `main.py`:
-
-```python
-model = instantiate(cfg.model)
-runtime = instantiate(cfg.sage, logger=logger)
-controller = instantiate(cfg.controller, model=model, tools=tools, logger=logger)
-```
-
-Model profiles live in `configs/model/*.yaml` and use each LangChain provider class as `_target_`.
-The Sage runtime profile lives in `configs/sage/default.yaml`.
-
-## Tool Extension Point
-
-Tools are selected by Hydra name in `configs/chat.yaml` and `configs/benchmark.yaml`:
-
-```yaml
-tools:
-  - sage_exec
-```
-
-`src/tools/catalog.py` currently exposes one minimal built-in:
-
-- `sage_exec`: run Sage script code in Docker (`code`, optional `result_var`)
-- `submit_final_answer`: internal finalization tool added by the controller
-
-To add a new tool:
-
-1. Add a Pydantic args schema in `src/agent/schemas.py` if the tool needs arguments.
-2. Add a LangChain `@tool` factory in `src/tools/catalog.py`.
-3. Add the factory to `AVAILABLE_TOOLS`.
-4. Add the tool name to `tools` in the Hydra config.
-
-## Benchmark Outputs
-
-Benchmark mode writes:
-
-- `predictions.jsonl`
-- `tool_traces.jsonl`
-- `metrics.json`
