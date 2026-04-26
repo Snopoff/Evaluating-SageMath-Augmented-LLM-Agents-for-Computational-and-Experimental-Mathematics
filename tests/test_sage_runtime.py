@@ -72,6 +72,16 @@ class SageRuntimeTests(unittest.TestCase):
         idx = cmd.index("--platform")
         self.assertEqual(cmd[idx + 1], "linux/amd64")
 
+    def test_container_name_included_when_provided(self) -> None:
+        runtime = SageRuntime(SageRuntimeConfig(image="docker.io/sagemath/sagemath:latest"))
+
+        cmd = runtime._build_docker_cmd("{}", Path("/tmp/llmxcas_sage_exec.py"), container_name="llmxcas-sage-test")
+
+        self.assertIn("--name", cmd)
+        self.assertEqual(cmd[cmd.index("--name") + 1], "llmxcas-sage-test")
+        self.assertIn("--label", cmd)
+        self.assertIn("llmxcas.sage_runtime=true", cmd)
+
     def test_runtime_exec_args_pass_payload_as_argv(self) -> None:
         runtime = SageRuntime(SageRuntimeConfig(image="docker.io/sagemath/sagemath:latest"))
         payload = '{"source_file":"/tmp/llmxcas_sage_exec.py","result_var":"RESULT"}'

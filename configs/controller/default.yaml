@@ -3,7 +3,5 @@ config:
   _target_: src.agent.controller.ControllerConfig
   max_steps: 15
   progress_logs: true
-  max_tool_calls: 30
-  require_successful_tool_call_for_final: false
   require_verification_for_final: false
   require_structured_final: true

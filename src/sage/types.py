@@ -23,7 +23,7 @@ class SageRuntimeConfig:
         progress_logs: Whether runtime-level progress messages are enabled.
     """
 
-    image: str
+    image: str = "docker.io/sagemath/sagemath:latest"
     platform: str = ""
     entrypoint: str = "/bin/bash"
     cpus: float = 1.0

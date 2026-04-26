@@ -97,28 +97,34 @@ class AgentControllerTests(unittest.TestCase):
     def test_plain_text_is_reprompted_when_structured_final_required(self) -> None:
         model = _FakeModel(
             [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}, "id": "call_1"}]),
                 AIMessage(content="4"),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_1"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}]),
             ]
         )
         controller = AgentController(
             model=model,
             tools=[_make_sage_tool()],
-            config=ControllerConfig(max_steps=2, require_structured_final=True),
+            config=ControllerConfig(max_steps=3, require_structured_final=True),
         )
 
         result = controller.solve("Q")
 
         self.assertEqual(result.final_answer, "4")
         self.assertEqual(result.stop_reason, "finalized")
-        self.assertEqual(model.invocations[1][-1].content, f"Use the {FINAL_ANSWER_TOOL_NAME} tool to submit the final answer.")
+        self.assertEqual(model.invocations[2][-1].content, f"Use the {FINAL_ANSWER_TOOL_NAME} tool to submit the final answer.")
 
-    def test_plain_text_can_finalize_when_structured_final_not_required(self) -> None:
-        model = _FakeModel([AIMessage(content="The answer is 4.")])
+    def test_plain_text_can_finalize_after_successful_sage_when_structured_final_not_required(self) -> None:
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}, "id": "call_1"}]),
+                AIMessage(content="The answer is 4."),
+            ]
+        )
         controller = AgentController(
             model=model,
             tools=[_make_sage_tool()],
-            config=ControllerConfig(max_steps=1, require_structured_final=False),
+            config=ControllerConfig(max_steps=2, require_structured_final=False),
         )
 
         result = controller.solve("Q")
@@ -137,25 +143,26 @@ class AgentControllerTests(unittest.TestCase):
                         {"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"},
                     ],
                 ),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_3"}]),
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_3"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_4"}]),
             ]
         )
         controller = AgentController(
             model=model,
             tools=[_make_sage_tool(calls)],
-            config=ControllerConfig(max_steps=2),
+            config=ControllerConfig(max_steps=3),
         )
 
         result = controller.solve("Q")
 
         self.assertEqual(result.final_answer, "4")
         self.assertEqual(result.stop_reason, "finalized")
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, [{"code": "RESULT = 4"}])
         self.assertEqual(model.invocations[1][-2].status, "error")
         self.assertEqual(model.invocations[1][-1].status, "error")
         self.assertIn("one tool at a time", model.invocations[1][-1].content)
 
-    def test_rejects_finalization_until_successful_sage_exec_when_configured(self) -> None:
+    def test_rejects_finalization_until_successful_sage_exec(self) -> None:
         code = "RESULT = 2 + 2"
         model = _FakeModel(
             [
@@ -167,7 +174,7 @@ class AgentControllerTests(unittest.TestCase):
         controller = AgentController(
             model=model,
             tools=[_make_sage_tool()],
-            config=ControllerConfig(max_steps=3, require_successful_tool_call_for_final=True),
+            config=ControllerConfig(max_steps=3),
         )
 
         result = controller.solve("Q")
@@ -215,24 +222,6 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "finalized")
         self.assertEqual(result.verified_sage_code, code)
 
-    def test_tool_call_limit_returns_stable_stop_reason(self) -> None:
-        model = _FakeModel(
-            [
-                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 1"}, "id": "call_1"}]),
-                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2"}, "id": "call_2"}]),
-            ]
-        )
-        controller = AgentController(
-            model=model,
-            tools=[_make_sage_tool()],
-            config=ControllerConfig(max_steps=2, max_tool_calls=1),
-        )
-
-        result = controller.solve("Q")
-
-        self.assertEqual(result.stop_reason, "max_tool_calls_reached")
-        self.assertEqual(len(result.tool_traces), 1)
-
     def test_logger_records_messages_tool_payloads_and_tokens(self) -> None:
         code = "RESULT = 2 + 2"
         model = _FakeModel(
@@ -279,8 +268,12 @@ class AgentControllerTests(unittest.TestCase):
             [
                 AIMessage(
                     content="",
-                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_1"}],
-                )
+                    tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}],
+                ),
             ]
         )
         controller = AgentController(model=model, tools=[_make_sage_tool()])
@@ -296,8 +289,12 @@ class AgentControllerTests(unittest.TestCase):
             [
                 AIMessage(
                     content="",
-                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_1"}],
-                )
+                    tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}],
+                ),
             ]
         )
         controller = AgentController(model=model, tools=[_make_sage_tool()], system_prompt="Use Sage carefully.")

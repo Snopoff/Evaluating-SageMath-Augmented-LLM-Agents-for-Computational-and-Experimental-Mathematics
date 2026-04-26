@@ -5,6 +5,7 @@ import math
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ import json
 import sys
 import traceback
 
+from sage.repl.preparse import preparse_file
 from sage.all import *
 
 
@@ -74,7 +76,8 @@ def main():
     stdout_buffer = io.StringIO()
     try:
         with contextlib.redirect_stdout(stdout_buffer):
-            exec(compile(code, source_file or "<sage_exec>", "exec"), namespace, namespace)
+            prepared_code = preparse_file(code)
+            exec(compile(prepared_code, source_file or "<sage_exec>", "exec"), namespace, namespace)
     except Exception as exc:
         emit(
             {
@@ -164,7 +167,8 @@ class SageRuntime:
             )
 
         payload_json = json.dumps({"source_file": CONTAINER_SOURCE_FILE, "result_var": result_var}, ensure_ascii=True)
-        cmd = self._build_docker_cmd(payload_json, source_file)
+        container_name = f"llmxcas-sage-{uuid.uuid4().hex[:12]}"
+        cmd = self._build_docker_cmd(payload_json, source_file, container_name=container_name)
         timeout = timeout_sec if timeout_sec is not None else self.config.wall_timeout_sec
 
         started = time.perf_counter()
@@ -178,6 +182,7 @@ class SageRuntime:
             )
         except subprocess.TimeoutExpired:
             runtime_ms = int((time.perf_counter() - started) * 1000)
+            self._kill_container(container_name)
             return ExecutionResult(
                 status="timeout",
                 result_plain="",
@@ -283,7 +288,7 @@ class SageRuntime:
             exit_code=completed.returncode,
         )
 
-    def _build_docker_cmd(self, payload_json: str, source_file: Path) -> list[str]:
+    def _build_docker_cmd(self, payload_json: str, source_file: Path, container_name: str | None = None) -> list[str]:
         """Builds the Docker command to execute the Sage code with the specified constraints and environment.
 
         Parameters:
@@ -291,6 +296,9 @@ class SageRuntime:
             source_file: The path to the temporary file containing the Sage code to execute.
         """
         cmd = ["docker", "run", "--rm"]
+        if container_name:
+            cmd.extend(["--name", container_name])
+        cmd.extend(["--label", "llmxcas.sage_runtime=true"])
         cmd.extend(
             [
                 "--mount",
@@ -363,6 +371,19 @@ class SageRuntime:
             return [shell_flag, shell_script, "_", SAGE_RUNNER_CODE, payload_json]
 
         return ["-python", "-c", SAGE_RUNNER_CODE, payload_json]
+
+    @staticmethod
+    def _kill_container(container_name: str) -> None:
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _write_source_file(code: str) -> Path:

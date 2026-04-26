@@ -14,7 +14,10 @@ FINAL_ANSWER_TOOL_NAME = "submit_final_answer"
 
 
 def make_sage_exec_tool(runtime: SageRuntime, usage_notes: str = "") -> BaseTool:
-    description = "Execute raw Sage code inside Docker. Assign the final value to RESULT."
+    description = (
+        "Execute Sage script code inside Docker. Sage preparser syntax is allowed, "
+        "including R.<x> declarations and ^ exponentiation. Assign the final value to RESULT."
+    )
     if usage_notes.strip():
         description = f"{description}\n\nUsage notes:\n{usage_notes.strip()}"
 
@@ -24,11 +27,10 @@ def make_sage_exec_tool(runtime: SageRuntime, usage_notes: str = "") -> BaseTool
         args_schema=SageExecArgs,
         response_format="content_and_artifact",
     )
-    def _sage_exec(code: str, result_var: str = "RESULT", timeout_sec: float | None = None) -> tuple[str, dict[str, Any]]:
+    def _sage_exec(code: str, result_var: str = "RESULT") -> tuple[str, dict[str, Any]]:
         result = runtime.execute_sage_code(
             code=code,
             result_var=result_var,
-            timeout_sec=timeout_sec,
         )
 
         content = result.result_plain

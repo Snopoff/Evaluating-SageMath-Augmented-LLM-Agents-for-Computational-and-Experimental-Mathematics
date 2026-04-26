@@ -29,16 +29,16 @@ Required workflow:
 
 Tool payload guidance for `sage_snippet`:
 - operation: "sage_snippet"
-- args.code: full Python/Sage code string (Python-compatible syntax)
+- args.code: full Sage script code string
 - optional args.result_var: variable name to extract from snippet (default "RESULT")
 - optional args.include_locals: bool
 
 Snippet guidance:
 - Include your own imports and initialization (for example `from sage.all import *`).
-- Use Python-compatible Sage syntax (`**` for exponentiation; avoid `^`).
+- Sage preparser syntax is allowed, including `^` exponentiation.
 - Always send real code in `args.code`; never send placeholders like `<<omitted:...>>`.
 - Keep `args` as an object and always include `args.code` for `sage_snippet`.
-- Avoid unsupported shorthand like `R.<x,y> = ...`; use `R = PolynomialRing(...)` and `R.gens()`.
+- Shorthand like `R.<x,y> = ...` is supported; plain Python-style `R = PolynomialRing(...)` and `R.gens()` is also fine.
 - Keep snippets minimal: smoke test + (optional) one fitting snippet only.
 - Prefer `sage_experiment` for data collection/validation instead of large custom loops.
 - Avoid fragile API calls (`graphs.Tree`, `Graphs.RandomTree`, `graphs.PruferTree`, etc.); if needed, use robust Sage basics only.

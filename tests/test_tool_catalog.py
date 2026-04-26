@@ -17,9 +17,11 @@ class SageExecToolFactoryTests(unittest.TestCase):
         sage_tool = make_sage_exec_tool(runtime, usage_notes="Use RESULT.")
 
         self.assertEqual(sage_tool.name, SAGE_EXEC_TOOL_NAME)
-        self.assertIn("Execute raw Sage code", sage_tool.description)
+        self.assertIn("Execute Sage script code", sage_tool.description)
+        self.assertIn("Sage preparser syntax is allowed", sage_tool.description)
         self.assertIn("Use RESULT.", sage_tool.description)
         self.assertIn("code", sage_tool.args)
+        self.assertNotIn("timeout_sec", sage_tool.args)
 
     def test_sage_exec_tool_rejects_missing_code_by_schema(self) -> None:
         runtime = types.SimpleNamespace()
@@ -44,7 +46,7 @@ class SageExecToolFactoryTests(unittest.TestCase):
         )
         sage_tool = make_sage_exec_tool(runtime)
 
-        result = sage_tool.invoke({"type": "tool_call", "id": "call_1", "name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2", "timeout_sec": 3}})
+        result = sage_tool.invoke({"type": "tool_call", "id": "call_1", "name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}})
 
         self.assertIsInstance(result, ToolMessage)
         self.assertEqual(result.content, "4")
@@ -53,6 +55,37 @@ class SageExecToolFactoryTests(unittest.TestCase):
         self.assertEqual(result.artifact["result_latex"], "4")
         self.assertEqual(result.artifact["verification"]["summary"], "pass")
         self.assertEqual(result.artifact["code"], "RESULT = 2 + 2")
+
+    def test_sage_exec_tool_ignores_model_supplied_timeout(self) -> None:
+        calls: list[dict[str, object]] = []
+        runtime = types.SimpleNamespace(
+            execute_sage_code=lambda **kwargs: (
+                calls.append(dict(kwargs))
+                or types.SimpleNamespace(
+                    status="ok",
+                    result_plain="4",
+                    result_latex="4",
+                    result_data=None,
+                    runtime_ms=12,
+                    stdout="",
+                    stderr="",
+                    error="",
+                    error_kind="",
+                )
+            )
+        )
+        sage_tool = make_sage_exec_tool(runtime)
+
+        sage_tool.invoke(
+            {
+                "type": "tool_call",
+                "id": "call_1",
+                "name": SAGE_EXEC_TOOL_NAME,
+                "args": {"code": "RESULT = 2 + 2", "timeout_sec": 120},
+            }
+        )
+
+        self.assertEqual(calls, [{"code": "RESULT = 2 + 2", "result_var": "RESULT"}])
 
     def test_sage_exec_tool_maps_runtime_failure(self) -> None:
         runtime = types.SimpleNamespace(

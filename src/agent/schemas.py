@@ -4,9 +4,15 @@ from pydantic import BaseModel, Field
 
 
 class SageExecArgs(BaseModel):
-    code: str = Field(min_length=1, description="Sage code to execute. Assign the final value to RESULT.")
+    code: str = Field(
+        min_length=1,
+        description=(
+            "Sage script code to execute with Sage's preparser. "
+            "Sage shorthand such as R.<x> declarations and ^ exponentiation is allowed. "
+            "Assign the final value to RESULT."
+        ),
+    )
     result_var: str = Field(default="RESULT", description="Variable name to read after execution.")
-    timeout_sec: float | None = Field(default=None, description="Optional per-call timeout in seconds.")
 
 
 class FinalAnswerArgs(BaseModel):

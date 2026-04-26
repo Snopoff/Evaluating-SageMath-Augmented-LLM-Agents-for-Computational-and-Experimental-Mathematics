@@ -85,7 +85,7 @@ tools:
 
 `src/tools/catalog.py` currently exposes one minimal built-in:
 
-- `sage_exec`: run raw Sage code in Docker (`code`, optional `result_var`, optional `timeout_sec`)
+- `sage_exec`: run Sage script code in Docker (`code`, optional `result_var`)
 - `submit_final_answer`: internal finalization tool added by the controller
 
 To add a new tool:

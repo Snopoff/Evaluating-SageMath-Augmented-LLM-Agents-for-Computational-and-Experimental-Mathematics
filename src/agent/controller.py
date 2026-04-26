@@ -21,8 +21,6 @@ class ControllerConfig:
 
     max_steps: int = 6
     progress_logs: bool = False
-    max_tool_calls: int = 4
-    require_successful_tool_call_for_final: bool = False
     require_verification_for_final: bool = False
     require_structured_final: bool = True
 
@@ -240,17 +238,6 @@ class AgentController:
                         )
                     )
 
-                if len(tool_traces) >= self.config.max_tool_calls:
-                    self._progress("tool call limit reached")
-                    return self._record_solve_result(
-                        SolveResult(
-                            final_answer=last_answer,
-                            tool_traces=tool_traces,
-                            turn_count=turn_index + 1,
-                            stop_reason="max_tool_calls_reached",
-                        )
-                    )
-
                 self._progress_tool_call(tool_name, tool_args)
                 self.logger.log_tool_call(agent_id=self.agent_id, turn=turn_index + 1, tool_name=tool_name, arguments=tool_args)
                 tool_message: ToolMessage = self._execute_tool(tool_name, tool_args, tool_call_id)
@@ -342,7 +329,7 @@ class AgentController:
     ) -> str | None:
         if not final_answer.strip():
             return "Rejected final answer. The final answer must be non-empty."
-        if self.config.require_successful_tool_call_for_final and last_successful_sage_trace is None:
+        if last_successful_sage_trace is None:
             return f"Rejected final answer. Execute {SAGE_EXEC_TOOL_NAME} successfully before finalizing."
         if self.config.require_verification_for_final:
             verification_ok, failures = verification_passes(self._trace_verification(last_successful_verification_trace))
