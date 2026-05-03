@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool, tool
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
 
-from src.agent.controller import AgentController, ControllerConfig  # noqa: E402
+from src.agent.controller import AgentController, ControllerConfig, SolveResult  # noqa: E402
 from src.tools.catalog import FINAL_ANSWER_TOOL_NAME, SAGE_EXEC_TOOL_NAME  # noqa: E402
 from src.utils.console_logging import ConsoleLogger  # noqa: E402
 
@@ -40,6 +40,9 @@ class _RecordingLogger(ConsoleLogger):
 
     def progress(self, message: str) -> None:
         self.progress_messages.append(message)
+
+    def log(self, message: str, level: str = "info", color: str = "white", *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        self.progress_messages.append(f"[{level}] {message}")
 
 
 def _verification_payload(summary: str = "pass") -> dict[str, object]:
@@ -74,7 +77,7 @@ class AgentControllerTests(unittest.TestCase):
         model = _FakeModel(
             [
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": code}, "id": "call_1"}]),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}]),
             ]
         )
         calls: list[dict[str, Any]] = []
@@ -87,6 +90,10 @@ class AgentControllerTests(unittest.TestCase):
         result = controller.solve("What is 2+2?")
 
         self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.explanation, "verified")
+        self.assertEqual(result.verified_claims, [])
+        self.assertEqual(result.final_payload["final_answer"], "4")
+        self.assertEqual(result.final_payload["explanation"], "verified")
         self.assertEqual(result.stop_reason, "finalized")
         self.assertEqual(calls, [{"code": code}])
         self.assertEqual(len(result.tool_traces), 1)
@@ -99,7 +106,7 @@ class AgentControllerTests(unittest.TestCase):
             [
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}, "id": "call_1"}]),
                 AIMessage(content="4"),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}]),
             ]
         )
         controller = AgentController(
@@ -132,6 +139,24 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(result.final_answer, "The answer is 4.")
         self.assertEqual(result.stop_reason, "finalized")
 
+    def test_solve_result_stores_explicit_structured_fields(self) -> None:
+        solve_result = SolveResult(
+            final_answer="4",
+            tool_traces=[],
+            turn_count=1,
+            stop_reason="finalized",
+            explanation="Sage verified it.",
+            verified_claims=["computed 2 + 2"],
+            final_payload={
+                "final_answer": "4",
+                "explanation": "Sage verified it.",
+                "verified_claims": ["computed 2 + 2"],
+            },
+        )
+
+        self.assertEqual(solve_result.explanation, "Sage verified it.")
+        self.assertEqual(solve_result.verified_claims, ["computed 2 + 2"])
+
     def test_rejects_multiple_tool_calls_in_one_turn(self) -> None:
         calls: list[dict[str, Any]] = []
         model = _FakeModel(
@@ -140,11 +165,11 @@ class AgentControllerTests(unittest.TestCase):
                     content="",
                     tool_calls=[
                         {"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}, "id": "call_1"},
-                        {"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"},
+                        {"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"},
                     ],
                 ),
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_3"}]),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_4"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_4"}]),
             ]
         )
         controller = AgentController(
@@ -166,9 +191,9 @@ class AgentControllerTests(unittest.TestCase):
         code = "RESULT = 2 + 2"
         model = _FakeModel(
             [
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_1"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_1"}]),
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": code}, "id": "call_2"}]),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_3"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_3"}]),
             ]
         )
         controller = AgentController(
@@ -184,31 +209,115 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(model.invocations[1][-1].status, "error")
         self.assertIn("Execute sage_exec successfully", model.invocations[1][-1].content)
 
-    def test_rejects_finalization_until_verification_passes_when_configured(self) -> None:
+    def test_rejects_finalization_without_explanation(self) -> None:
         model = _FakeModel(
             [
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
                 AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}]),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_3"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_3"}]),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            tools=[_make_sage_tool()],
+            config=ControllerConfig(max_steps=3),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.stop_reason, "finalized")
+        self.assertEqual(model.invocations[2][-1].status, "error")
+        self.assertIn("Invalid submit_final_answer arguments", model.invocations[2][-1].content)
+
+    def test_rejects_finalization_until_verification_passes_when_configured(self) -> None:
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_3"}]),
             ]
         )
         controller = AgentController(
             model=model,
             tools=[_make_sage_tool(verification_summary="fail")],
-            config=ControllerConfig(max_steps=3, require_verification_for_final=True),
+            config=ControllerConfig(max_steps=2, require_verification_for_final=True),
         )
 
         result = controller.solve("Q")
 
-        self.assertEqual(result.stop_reason, "max_steps_reached")
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.stop_reason, "forced_finalized_without_verification")
+
+    def test_forces_finalization_after_step_limit(self) -> None:
+        code = "RESULT = 2 + 2"
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": code}, "id": "call_1"}]),
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_2"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_3"}]),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            tools=[_make_sage_tool()],
+            config=ControllerConfig(max_steps=2),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.stop_reason, "forced_finalized")
+        self.assertEqual(result.turn_count, 3)
+        self.assertEqual(result.verified_sage_code, "RESULT = 4")
+        self.assertIn("step limit", model.invocations[2][-1].content)
+        self.assertIn("Do not call sage_exec again", model.invocations[2][-1].content)
+
+    def test_forced_finalization_marks_missing_successful_sage(self) -> None:
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_1"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "Best unverified answer: 4", "explanation": "verified"}, "id": "call_2"}]),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            tools=[_make_sage_tool()],
+            config=ControllerConfig(max_steps=1),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "Best unverified answer: 4")
+        self.assertEqual(result.stop_reason, "forced_finalized_without_successful_sage")
         self.assertEqual(result.verified_sage_code, "")
+
+    def test_forced_finalization_fails_without_final_tool_call(self) -> None:
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}, "id": "call_1"}]),
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_2"}]),
+                AIMessage(content="The answer is 4."),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            tools=[_make_sage_tool()],
+            config=ControllerConfig(max_steps=2),
+        )
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "")
+        self.assertEqual(result.stop_reason, "forced_finalization_failed")
+        self.assertEqual(result.explanation, "Forced finalization failed: the model did not call submit_final_answer with valid arguments.")
 
     def test_accepts_verified_finalization(self) -> None:
         code = "RESULT = {'verification': {'summary': 'pass'}}"
         model = _FakeModel(
             [
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": code}, "id": "call_1"}]),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}]),
             ]
         )
         controller = AgentController(
@@ -233,7 +342,7 @@ class AgentControllerTests(unittest.TestCase):
                 ),
                 AIMessage(
                     content="",
-                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}],
+                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}],
                     usage_metadata={"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
                 ),
             ]
@@ -259,9 +368,9 @@ class AgentControllerTests(unittest.TestCase):
 
         tool_call_events = [event for event in logger.events if event["kind"] == "tool_call"]
         self.assertEqual(tool_call_events[0]["payload"]["arguments"]["code"], code)
-        self.assertTrue(any("model reply:" in message for message in logger.progress_messages))
-        self.assertTrue(any("tool call: sage_exec" in message for message in logger.progress_messages))
-        self.assertTrue(any("tool result: sage_exec" in message for message in logger.progress_messages))
+        self.assertTrue(any("model_reply" in message for message in logger.progress_messages))
+        self.assertTrue(any("tool_call" in message and "sage_exec" in message for message in logger.progress_messages))
+        self.assertTrue(any("tool_result" in message and "sage_exec" in message for message in logger.progress_messages))
 
     def test_initial_message_is_user_question_without_system_prompt(self) -> None:
         model = _FakeModel(
@@ -272,7 +381,7 @@ class AgentControllerTests(unittest.TestCase):
                 ),
                 AIMessage(
                     content="",
-                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}],
+                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}],
                 ),
             ]
         )
@@ -293,7 +402,7 @@ class AgentControllerTests(unittest.TestCase):
                 ),
                 AIMessage(
                     content="",
-                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4"}, "id": "call_2"}],
+                    tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "explanation": "verified"}, "id": "call_2"}],
                 ),
             ]
         )

@@ -59,10 +59,15 @@ def make_sage_exec_tool(runtime: SageRuntime, usage_notes: str = "") -> BaseTool
 
 def make_submit_final_answer_tool() -> BaseTool:
     @tool(FINAL_ANSWER_TOOL_NAME, args_schema=FinalAnswerArgs)
-    def _submit_final_answer(final_answer: str) -> str:
-        """Submit the final answer to the math problem."""
+    def _submit_final_answer(final_answer: str, explanation: str, verified_claims: list[str] | None = None) -> str:
+        """Submit the structured final answer to the math problem."""
 
-        return final_answer
+        payload = FinalAnswerArgs(
+            final_answer=final_answer,
+            explanation=explanation,
+            verified_claims=verified_claims or [],
+        )
+        return payload.model_dump_json()
 
     return _submit_final_answer
 

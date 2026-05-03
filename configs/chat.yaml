@@ -1,14 +1,14 @@
 defaults:
-  - model: openai #yandex
+  - model: yandex
   - controller: default
   - sage: default
   - logger: wandb
-  - prompt: frontiermath_degree19 #transformer
+  - prompt: join_chromatic_pattern #frontiermath_degree19 #transformer
   - system_prompt: v3
   - sage_skill: v2
   - _self_
 
-model_name: gpt-5.5-2026-04-23 #deepseek-v32/latest #gpt-oss-20b/latest #qwen3:4b-thinking-2507-q4_K_M
+model_name: deepseek-v32/latest #gpt-5.5-2026-04-23 #deepseek-v32/latest #gpt-oss-20b/latest #qwen3:4b-thinking-2507-q4_K_M
 mode: chat
 progress_logs: true
 tools:

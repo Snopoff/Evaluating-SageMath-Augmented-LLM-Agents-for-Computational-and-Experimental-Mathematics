@@ -1,0 +1,3 @@
+Let G1 and G2 be graphs of orders n1 and n2, and let G1+G2 denote their join.
+Let μ(G;x) be the Laplacian characteristic polynomial of G.
+Express μ(G1+G2;x) in terms of x, n1, n2, μ(G1;·), and μ(G2;·).

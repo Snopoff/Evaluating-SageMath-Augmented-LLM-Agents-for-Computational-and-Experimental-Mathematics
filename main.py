@@ -6,11 +6,10 @@ from typing import Iterable
 import hydra
 import hydra.utils as hu
 import rootutils
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.benchmark.run_realmath import RealMathBenchmarkRunner  # noqa: E402
 from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
 from src.utils.config_helpers import resolve_prompt, resolve_text_asset  # noqa: E402
 
@@ -81,7 +80,10 @@ def main(cfg: DictConfig) -> None:
                 )
             if progress_logs:
                 logger.progress(f"chat completed (turns={result.turn_count}, reason={result.stop_reason})")
-            print(result.final_answer)
+            if result.final_payload:
+                print(json.dumps(result.final_payload, indent=2, ensure_ascii=False))
+            else:
+                print(result.final_answer)
             if artifact_path is not None:
                 print()
                 print(f"Verified Sage code saved to: {artifact_path}")
@@ -92,16 +94,11 @@ def main(cfg: DictConfig) -> None:
             logger.finish_run(status="failed")
             raise
 
-    if mode == "benchmark":  # TODO: Check and (re)implement it; not used for now
-        bench_cfg = OmegaConf.to_container(cfg.benchmark, resolve=True)
-        if not isinstance(bench_cfg, dict):
-            raise ValueError("Config 'benchmark' must be a mapping.")
-
-        dataset_path = Path(hu.to_absolute_path(str(cfg.benchmark.dataset_path)))
-        benchmark_cfg = hu.instantiate(cfg.benchmark, dataset_path=dataset_path)
-        runner = RealMathBenchmarkRunner(
+    if mode == "benchmark":
+        cfg.benchmark.config.dataset_path = hu.to_absolute_path(str(cfg.benchmark.config.dataset_path))
+        runner = hu.instantiate(
+            cfg.benchmark,
             controller=controller,
-            config=benchmark_cfg,
             sage_runtime=runtime,
             logger=logger,
         )

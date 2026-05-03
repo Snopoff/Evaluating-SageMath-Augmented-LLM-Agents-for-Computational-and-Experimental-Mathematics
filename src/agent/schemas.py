@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SageExecArgs(BaseModel):
@@ -16,4 +14,19 @@ class SageExecArgs(BaseModel):
 
 
 class FinalAnswerArgs(BaseModel):
-    final_answer: str = Field(min_length=1, description="The final answer to return to the caller.")
+    model_config = ConfigDict(extra="forbid")
+
+    final_answer: str = Field(
+        min_length=1,
+        description=(
+            "The exact, concise answer to score. Put only the checkable result here, not the derivation or verification narrative."
+        ),
+    )
+    explanation: str = Field(
+        min_length=1,
+        description="Brief explanation or verification summary supporting the final answer.",
+    )
+    verified_claims: list[str] = Field(
+        default_factory=list,
+        description="Optional short list of final claims supported by successful Sage output or explicit reasoning.",
+    )

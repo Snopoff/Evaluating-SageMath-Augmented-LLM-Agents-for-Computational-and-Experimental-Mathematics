@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from src.agent.controller import AgentController
 from src.sage.runtime import SageRuntime
+from src.agent.controller import AgentController
+from src.utils.console_logging import ConsoleLogger
 
 _LATEX_WRAPPERS = [
     (r"\\[", ""),
@@ -23,7 +24,7 @@ _ALLOWED_SYMBOLIC_CHARS = re.compile(r"^[0-9A-Za-z_+\-*/^=()\[\]{}.,<>| :]+$")
 
 @dataclass(frozen=True)
 class BenchmarkConfig:
-    """Configuration for running the RealMath benchmark loop.
+    """Configuration for running the benchmark loop.
 
     Args:
         dataset_path: Input dataset path containing benchmark rows.
@@ -55,24 +56,6 @@ class BenchmarkConfig:
         object.__setattr__(self, "dataset_path", Path(self.dataset_path))
         object.__setattr__(self, "output_dir", Path(self.output_dir))
 
-    @classmethod
-    def from_config(cls, cfg: Mapping[str, Any], dataset_path: Path) -> BenchmarkConfig:
-        cfg_dict = dict(cfg)
-        output_dir = Path(str(cfg_dict.get("output_dir", ".")))
-        return cls(
-            dataset_path=dataset_path,
-            output_dir=output_dir,
-            limit=int(cfg_dict.get("limit", 25)),
-            progress_logs=bool(cfg_dict.get("progress_logs", False)),
-            question_field=str(cfg_dict.get("question_field", "question")),
-            answer_field=str(cfg_dict.get("answer_field", "answer")),
-            id_field=str(cfg_dict.get("id_field", "id")),
-            predictions_file=str(cfg_dict.get("predictions_file", "predictions.jsonl")),
-            tool_traces_file=str(cfg_dict.get("tool_traces_file", "tool_traces.jsonl")),
-            metrics_file=str(cfg_dict.get("metrics_file", "metrics.json")),
-            symbolic_timeout_sec=float(cfg_dict.get("symbolic_timeout_sec", 8.0)),
-        )
-
 
 @dataclass(frozen=True)
 class ScoreResult:
@@ -91,7 +74,7 @@ class ScoreResult:
     normalized_reference: str
 
 
-class RealMathBenchmarkRunner:
+class BenchmarkRunner:
     """Executes benchmark rows and writes predictions, traces, and metrics.
 
     Args:
@@ -105,7 +88,7 @@ class RealMathBenchmarkRunner:
         controller: AgentController,
         config: BenchmarkConfig,
         sage_runtime: SageRuntime | None = None,
-        logger: Any | None = None,
+        logger: ConsoleLogger | None = None,
     ):
         self.controller = controller
         self.config = config
@@ -153,6 +136,9 @@ class RealMathBenchmarkRunner:
                             "question": question,
                             "reference_answer": reference_answer,
                             "predicted_answer": solve_result.final_answer,
+                            "explanation": solve_result.explanation,
+                            "verified_claims": solve_result.verified_claims,
+                            "final_payload": solve_result.final_payload,
                             "normalized_prediction": score.normalized_prediction,
                             "normalized_reference": score.normalized_reference,
                             "correct": score.correct,
@@ -192,7 +178,44 @@ class RealMathBenchmarkRunner:
         with metrics_path.open("w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, ensure_ascii=False)
 
+        if self.logger is not None:
+            self._log_benchmark_artifacts(
+                predictions_path=predictions_path,
+                traces_path=traces_path,
+                metrics_path=metrics_path,
+                metrics=metrics,
+            )
+
         return metrics
+
+    def _log_benchmark_artifacts(
+        self,
+        *,
+        predictions_path: Path,
+        traces_path: Path,
+        metrics_path: Path,
+        metrics: Mapping[str, Any],
+    ) -> None:
+        if not hasattr(self.logger, "log_artifact"):
+            return
+
+        artifact_metadata = {
+            "dataset_path": str(self.config.dataset_path),
+            "limit": self.config.limit,
+            "rows": metrics.get("rows", 0),
+            "accuracy": metrics.get("accuracy", 0.0),
+        }
+        for name, path, artifact_type in (
+            ("benchmark-predictions", predictions_path, "benchmark-predictions"),
+            ("benchmark-tool-traces", traces_path, "benchmark-tool-traces"),
+            ("benchmark-metrics", metrics_path, "benchmark-metrics"),
+        ):
+            self.logger.log_artifact(  # type: ignore
+                name=name,
+                path=path,
+                artifact_type=artifact_type,
+                metadata=artifact_metadata,
+            )
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
@@ -203,16 +226,61 @@ class RealMathBenchmarkRunner:
 
     @staticmethod
     def _iter_rows(path: Path, limit: int) -> Iterable[dict[str, Any]]:
+        if path.suffix == ".json":
+            yield from BenchmarkRunner._iter_json_rows(path, limit)
+            return
+
         with path.open("r", encoding="utf-8") as handle:
-            for index, line in enumerate(handle):
-                if index >= limit:
-                    break
+            rows_seen = 0
+            for line in handle:
                 line = line.strip()
                 if not line:
                     continue
                 payload = json.loads(line)
                 if isinstance(payload, dict):
                     yield payload
+                    rows_seen += 1
+                    if rows_seen >= limit:
+                        break
+
+    @staticmethod
+    def _iter_json_rows(path: Path, limit: int) -> Iterable[dict[str, Any]]:
+        text = path.read_text(encoding="utf-8")
+        rows: Iterable[Any]
+        try:
+            payload = json.loads(text)
+            if isinstance(payload, dict) and isinstance(payload.get("problems"), list):
+                rows = payload["problems"]
+            elif isinstance(payload, list):
+                rows = payload
+            elif isinstance(payload, dict):
+                rows = [payload]
+            else:
+                rows = []
+        except json.JSONDecodeError:
+            rows = BenchmarkRunner._iter_json_stream(text)
+
+        rows_seen = 0
+        for row in rows:
+            if isinstance(row, dict):
+                yield row
+                rows_seen += 1
+                if rows_seen >= limit:
+                    break
+
+    @staticmethod
+    def _iter_json_stream(text: str) -> Iterable[dict[str, Any]]:
+        decoder = json.JSONDecoder()
+        index = 0
+        while index < len(text):
+            while index < len(text) and text[index].isspace():
+                index += 1
+            if index >= len(text):
+                break
+            payload, next_index = decoder.raw_decode(text, index)
+            if isinstance(payload, dict):
+                yield payload
+            index = next_index
 
     def _score_prediction(self, prediction: str, reference: str) -> ScoreResult:
         norm_prediction = normalize_answer(prediction)

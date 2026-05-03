@@ -1,9 +1,9 @@
 _target_: src.benchmark.runner.BenchmarkRunner
 config:
   _target_: src.benchmark.runner.BenchmarkConfig
-  dataset_path: data/processed/realmathbenchmark_qa.jsonl
-  output_dir: .
-  limit: 25
+  dataset_path: data/processed/agent_benchmark_5.json
+  output_dir: outputs/agent_benchmark_5
+  limit: 5
   progress_logs: true
   question_field: question
   answer_field: answer

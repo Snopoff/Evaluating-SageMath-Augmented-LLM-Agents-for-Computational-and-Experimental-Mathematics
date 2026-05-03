@@ -1,5 +1,5 @@
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 from langchain_core.language_models import LanguageModelInput
@@ -32,6 +32,9 @@ class SolveResult:
     turn_count: int
     stop_reason: str
     verified_sage_code: str = ""
+    explanation: str = ""
+    verified_claims: list[str] = field(default_factory=list)
+    final_payload: dict[str, Any] = field(default_factory=dict)
 
 
 class AgentController:
@@ -74,9 +77,9 @@ class AgentController:
                 return value
         return model.__class__.__name__
 
-    def _progress(self, message: str) -> None:
+    def _log(self, *args, **kwargs) -> None:
         if self.config.progress_logs:
-            self.logger.progress(f"[bold orange1]\\[controller][/bold orange1] {message}")  # type: ignore because rich markup
+            self.logger.log(*args, **kwargs)
 
     @staticmethod
     def _preview_text(text: str, max_chars: int = 240) -> str:
@@ -85,18 +88,24 @@ class AgentController:
             return compact
         return f"{compact[: max_chars - 3]}..."
 
-    def _progress_model_reply(self, message: AIMessage) -> None:
-        self._progress(f"model reply: {self._preview_text(json.dumps(self._message_payload(message), ensure_ascii=True))}")
+    def _log_model_reply(self, message: AIMessage) -> None:
+        self._log(self._preview_text(json.dumps(self._message_payload(message), ensure_ascii=True)), level="model_reply", color="green")
 
-    def _progress_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> None:
-        self._progress(f"tool call: {tool_name} args={self._preview_text(json.dumps(arguments, ensure_ascii=True), max_chars=320)}")
+    def _log_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> None:
+        self._log(
+            f"{tool_name} args={self._preview_text(json.dumps(arguments, ensure_ascii=True), max_chars=320)}",
+            level="tool_call",
+            color="blue",
+        )
 
-    def _progress_tool_result(self, trace: Mapping[str, Any]) -> None:
+    def _log_tool_result(self, trace: Mapping[str, Any]) -> None:
         metadata = trace.get("metadata", {})
         status = metadata.get("status", "unknown") if isinstance(metadata, Mapping) else "unknown"
-        self._progress(
-            f"tool result: {trace.get('name', '?')} ok={trace.get('ok', False)} status={status} "
-            f"content={self._preview_text(str(trace.get('content', '')))}"
+        self._log(
+            f"{trace.get('name', '?')} ok={trace.get('ok', False)} status={status} "
+            f"content={self._preview_text(str(trace.get('content', '')))}",
+            level="tool_result",
+            color="magenta",
         )
 
     @staticmethod
@@ -144,30 +153,16 @@ class AgentController:
         )
 
         tool_traces: list[dict[str, Any]] = []
-        last_answer = ""
         last_successful_sage_code = ""
         last_successful_sage_trace: dict[str, Any] | None = None
         last_successful_verification_code = ""
         last_successful_verification_trace: dict[str, Any] | None = None
 
         for turn_index in range(self.config.max_steps):
-            self._progress(f"turn {turn_index + 1}/{self.config.max_steps}")
-            ai_message: AIMessage = self._invoke_model(messages)
-            self._progress_model_reply(ai_message)
-            self.logger.log_model_call(
-                agent_id=self.agent_id,
-                turn=turn_index + 1,
-                model_name=self.model_name,
-                messages=self._messages_for_logging(messages),
-                raw_response=json.dumps(self._message_payload(ai_message), ensure_ascii=True),
-                parsed_payload=self._message_payload(ai_message),
-                token_usage=self._extract_token_usage(ai_message),
-            )
+            self._log(f"{turn_index + 1}/{self.config.max_steps}", level="turn", color="yellow")
+            ai_message: AIMessage = self._invoke_and_log_model(messages, turn=turn_index + 1)
 
             content: str = self._message_text(ai_message).strip()
-            if content:
-                last_answer = content
-
             tool_calls: list = list(ai_message.tool_calls or [])
             if not tool_calls:
                 if self.config.require_structured_final:
@@ -187,15 +182,15 @@ class AgentController:
                 if rejection is not None:
                     messages.extend([ai_message, HumanMessage(content=rejection)])
                     continue
-                return self._record_solve_result(
-                    SolveResult(
-                        final_answer=content,
-                        tool_traces=tool_traces,
-                        turn_count=turn_index + 1,
-                        stop_reason="finalized",
-                        verified_sage_code=last_successful_verification_code or last_successful_sage_code,
-                    )
+                result = SolveResult(
+                    final_answer=content,
+                    tool_traces=tool_traces,
+                    turn_count=turn_index + 1,
+                    stop_reason="finalized",
+                    verified_sage_code=last_successful_verification_code or last_successful_sage_code,
                 )
+                self._log_solve_result(result)
+                return result
 
             if len(tool_calls) > 1:
                 messages.append(ai_message)
@@ -220,30 +215,34 @@ class AgentController:
                 tool_call_id: str = str(tool_call.get("id") or f"call_{turn_index + 1}_{len(tool_traces) + 1}")
 
                 if tool_name == FINAL_ANSWER_TOOL_NAME:
-                    final_answer, rejection = self._read_final_answer(
+                    final_payload, rejection = self._read_final_answer(
                         tool_args,
                         last_successful_sage_trace=last_successful_sage_trace,
                         last_successful_verification_trace=last_successful_verification_trace,
+                        forced=False,
                     )
                     if rejection is not None:
                         messages.append(ToolMessage(content=rejection, name=tool_name, tool_call_id=tool_call_id, status="error"))
                         continue
-                    return self._record_solve_result(
-                        SolveResult(
-                            final_answer=final_answer,
-                            tool_traces=tool_traces,
-                            turn_count=turn_index + 1,
-                            stop_reason="finalized",
-                            verified_sage_code=last_successful_verification_code or last_successful_sage_code,
-                        )
+                    result = SolveResult(
+                        final_answer=final_payload.final_answer.strip(),
+                        tool_traces=tool_traces,
+                        turn_count=turn_index + 1,
+                        stop_reason="finalized",
+                        verified_sage_code=last_successful_verification_code or last_successful_sage_code,
+                        explanation=final_payload.explanation.strip(),
+                        verified_claims=final_payload.verified_claims,
+                        final_payload=final_payload.model_dump(),
                     )
+                    self._log_solve_result(result)
+                    return result
 
-                self._progress_tool_call(tool_name, tool_args)
+                self._log_tool_call(tool_name, tool_args)
                 self.logger.log_tool_call(agent_id=self.agent_id, turn=turn_index + 1, tool_name=tool_name, arguments=tool_args)
                 tool_message: ToolMessage = self._execute_tool(tool_name, tool_args, tool_call_id)
                 trace: dict = self._trace_from_tool_message(turn_index + 1, tool_name, tool_args, tool_message)
                 tool_traces.append(trace)
-                self._progress_tool_result(trace)
+                self._log_tool_result(trace)
                 self.logger.log_tool_result(
                     agent_id=self.agent_id,
                     turn=turn_index + 1,
@@ -264,13 +263,108 @@ class AgentController:
 
                 messages.append(tool_message)
 
-        return self._record_solve_result(
-            SolveResult(
-                final_answer=last_answer,
-                tool_traces=tool_traces,
-                turn_count=self.config.max_steps,
-                stop_reason="max_steps_reached",
+        return self._force_finalization(
+            messages=messages,
+            tool_traces=tool_traces,
+            last_successful_sage_trace=last_successful_sage_trace,
+            last_successful_verification_trace=last_successful_verification_trace,
+            verified_sage_code=last_successful_verification_code or last_successful_sage_code,
+        )
+
+    def _invoke_and_log_model(self, messages: list[BaseMessage], *, turn: int) -> AIMessage:
+        ai_message: AIMessage = self._invoke_model(messages)
+        self._log_model_reply(ai_message)
+        self.logger.log_model_call(
+            agent_id=self.agent_id,
+            turn=turn,
+            model_name=self.model_name,
+            messages=self._messages_for_logging(messages),
+            raw_response=json.dumps(self._message_payload(ai_message), ensure_ascii=True),
+            parsed_payload=self._message_payload(ai_message),
+            token_usage=self._extract_token_usage(ai_message),
+        )
+        return ai_message
+
+    def _force_finalization(
+        self,
+        *,
+        messages: list[BaseMessage],
+        tool_traces: list[dict[str, Any]],
+        last_successful_sage_trace: Mapping[str, Any] | None,
+        last_successful_verification_trace: Mapping[str, Any] | None,
+        verified_sage_code: str,
+    ) -> SolveResult:
+        self._log("step limit reached; requesting forced final answer")
+        messages.append(HumanMessage(content=self._forced_finalization_message(last_successful_sage_trace)))
+        turn = self.config.max_steps + 1
+        ai_message = self._invoke_and_log_model(messages, turn=turn)
+
+        stop_reason = self._forced_stop_reason(
+            last_successful_sage_trace=last_successful_sage_trace,
+            last_successful_verification_trace=last_successful_verification_trace,
+        )
+        tool_calls = list(ai_message.tool_calls or [])
+        for tool_call in tool_calls:
+            tool_name = str(tool_call.get("name", ""))
+            if tool_name != FINAL_ANSWER_TOOL_NAME:
+                continue
+            final_payload, rejection = self._read_final_answer(
+                dict(tool_call.get("args", {})),
+                last_successful_sage_trace=last_successful_sage_trace,
+                last_successful_verification_trace=last_successful_verification_trace,
+                forced=True,
             )
+            if rejection is None:
+                result = SolveResult(
+                    final_answer=final_payload.final_answer.strip(),
+                    tool_traces=tool_traces,
+                    turn_count=turn,
+                    stop_reason=stop_reason,
+                    verified_sage_code=verified_sage_code,
+                    explanation=final_payload.explanation.strip(),
+                    verified_claims=final_payload.verified_claims,
+                    final_payload=final_payload.model_dump(),
+                )
+                self._log_solve_result(result)
+                return result
+
+        result = SolveResult(
+            final_answer="",
+            tool_traces=tool_traces,
+            turn_count=turn,
+            stop_reason="forced_finalization_failed",
+            verified_sage_code=verified_sage_code,
+            explanation="Forced finalization failed: the model did not call submit_final_answer with valid arguments.",
+        )
+        self._log_solve_result(result)
+        return result
+
+    def _forced_stop_reason(
+        self,
+        *,
+        last_successful_sage_trace: Mapping[str, Any] | None,
+        last_successful_verification_trace: Mapping[str, Any] | None,
+    ) -> str:
+        if last_successful_sage_trace is None:
+            return "forced_finalized_without_successful_sage"
+        if self.config.require_verification_for_final:
+            verification_ok, _ = verification_passes(self._trace_verification(last_successful_verification_trace))
+            if not verification_ok:
+                return "forced_finalized_without_verification"
+        return "forced_finalized"
+
+    @staticmethod
+    def _forced_finalization_message(last_successful_sage_trace: Mapping[str, Any] | None) -> str:
+        evidence_note = (
+            "Use the successful Sage evidence already in the conversation."
+            if last_successful_sage_trace is not None
+            else "No successful Sage execution is available; say explicitly that the answer is not CAS-verified."
+        )
+        return (
+            "The step limit has been reached. Do not call sage_exec again. "
+            f"{evidence_note} Call submit_final_answer now with the best final answer you can justify. "
+            "Put the exact checkable result in final_answer and the context in explanation. "
+            "If the evidence is incomplete, state what is verified and what remains unverified in explanation."
         )
 
     def _invoke_model(self, messages: list[BaseMessage]) -> AIMessage:
@@ -306,19 +400,26 @@ class AgentController:
         *,
         last_successful_sage_trace: Mapping[str, Any] | None,
         last_successful_verification_trace: Mapping[str, Any] | None,
-    ) -> tuple[str, str | None]:
+        forced: bool,
+    ) -> tuple[FinalAnswerArgs | None, str | None]:
         try:
             payload = FinalAnswerArgs.model_validate(tool_args)
         except ValidationError as exc:
-            return "", f"Rejected final answer. Invalid {FINAL_ANSWER_TOOL_NAME} arguments: {exc}"
+            return None, f"Rejected final answer. Invalid {FINAL_ANSWER_TOOL_NAME} arguments: {exc}"
 
         final_answer = payload.final_answer.strip()
+        if not payload.explanation.strip():
+            return None, "Rejected final answer. The explanation must be non-empty."
+        if forced:
+            if not final_answer:
+                return None, "Rejected final answer. The final answer must be non-empty."
+            return payload, None
         rejection = self._finalization_rejection(
             final_answer=final_answer,
             last_successful_sage_trace=last_successful_sage_trace,
             last_successful_verification_trace=last_successful_verification_trace,
         )
-        return final_answer, rejection
+        return payload, rejection
 
     def _finalization_rejection(
         self,
@@ -354,7 +455,7 @@ class AgentController:
             "metadata": metadata,
         }
 
-    def _record_solve_result(self, result: SolveResult) -> SolveResult:
+    def _log_solve_result(self, result: SolveResult) -> None:
         self.logger.log_solve_result(
             agent_id=self.agent_id,
             final_answer=result.final_answer,
@@ -362,8 +463,10 @@ class AgentController:
             stop_reason=result.stop_reason,
             tool_traces=result.tool_traces,
             verified_sage_code=result.verified_sage_code,
+            explanation=result.explanation,
+            verified_claims=result.verified_claims,
+            final_payload=result.final_payload,
         )
-        return result
 
     @staticmethod
     def _message_text(message: BaseMessage) -> str:

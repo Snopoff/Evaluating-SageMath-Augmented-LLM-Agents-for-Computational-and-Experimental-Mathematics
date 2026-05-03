@@ -15,15 +15,9 @@ dependencies = [
     "langchain-ollama>=1.1.0",
     "langchain-openai>=1.2.0",
 
-    #* MLX (only for macOS)
-    "mlx>=0.31.0; sys_platform == 'darwin'",
-    "mlx-lm>=0.31.0; sys_platform == 'darwin'",
-    "mlx-metal>=0.31.0; sys_platform == 'darwin'",
-
     #* Logging
     "wandb>=0.22.0",
     "weave>=0.51.50",
-
     #* Tools
     "rich>=14.3.3",
     "rootutils>=1.0.7",
@@ -31,3 +25,10 @@ dependencies = [
 
 [dependency-groups]
 dev = ["ipykernel>=7.2.0"]
+
+[project.optional-dependencies]
+mlx = [
+    "mlx>=0.31.0; sys_platform == 'darwin'",
+    "mlx-lm>=0.31.0; sys_platform == 'darwin'",
+    "mlx-metal>=0.31.0; sys_platform == 'darwin'",
+]

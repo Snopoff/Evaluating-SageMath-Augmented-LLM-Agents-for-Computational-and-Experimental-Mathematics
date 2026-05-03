@@ -2,12 +2,15 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+
+import hydra.utils as hu
 import rootutils
+from omegaconf import OmegaConf
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
 from src.agent.controller import SolveResult  # noqa: E402
-from src.benchmark.run_realmath import BenchmarkConfig, RealMathBenchmarkRunner  # noqa: E402
+from src.benchmark.runner import BenchmarkConfig, BenchmarkRunner  # noqa: E402
 
 
 class _FakeController:
@@ -57,7 +60,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 tool_traces_file="tool_traces.jsonl",
                 metrics_file="metrics.json",
             )
-            runner = RealMathBenchmarkRunner(
+            runner = BenchmarkRunner(
                 controller=_FakeController("4"),
                 config=config,
             )
@@ -69,6 +72,75 @@ class BenchmarkRunnerTests(unittest.TestCase):
             self.assertTrue((tmp_path / "predictions.jsonl").exists())
             self.assertTrue((tmp_path / "tool_traces.jsonl").exists())
             self.assertTrue((tmp_path / "metrics.json").exists())
+
+    def test_reads_json_problem_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            dataset_path = tmp_path / "data.json"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "benchmark_name": "sample",
+                        "problems": [
+                            {
+                                "id": "problem-1",
+                                "question": "What is 2+2?",
+                                "answer": "4",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = BenchmarkConfig(
+                dataset_path=dataset_path,
+                output_dir=tmp_path,
+                limit=1,
+            )
+            runner = BenchmarkRunner(
+                controller=_FakeController("4"),
+                config=config,
+            )
+
+            metrics = runner.run()
+
+            self.assertEqual(metrics["rows"], 1)
+            self.assertEqual(metrics["accuracy"], 1.0)
+
+    def test_runner_is_hydra_instantiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            dataset_path = tmp_path / "data.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "problem-1",
+                        "question": "What is 2+2?",
+                        "answer": "4",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            cfg = OmegaConf.create(
+                {
+                    "_target_": "src.benchmark.runner.BenchmarkRunner",
+                    "config": {
+                        "_target_": "src.benchmark.runner.BenchmarkConfig",
+                        "dataset_path": str(dataset_path),
+                        "output_dir": str(tmp_path),
+                        "limit": 1,
+                    },
+                }
+            )
+
+            runner = hu.instantiate(cfg, controller=_FakeController("4"))
+            metrics = runner.run()
+
+            self.assertEqual(metrics["rows"], 1)
+            self.assertEqual(metrics["accuracy"], 1.0)
 
 
 if __name__ == "__main__":

@@ -151,6 +151,9 @@ class WandbWeaveLogger(ConsoleLogger):
         stop_reason: str,
         tool_traces: list[dict[str, Any]],
         verified_sage_code: str = "",
+        explanation: str = "",
+        verified_claims: list[str] | None = None,
+        final_payload: Mapping[str, Any] | None = None,
     ) -> None:
         super().log_solve_result(
             agent_id=agent_id,
@@ -159,6 +162,9 @@ class WandbWeaveLogger(ConsoleLogger):
             stop_reason=stop_reason,
             tool_traces=tool_traces,
             verified_sage_code=verified_sage_code,
+            explanation=explanation,
+            verified_claims=verified_claims,
+            final_payload=final_payload,
         )
         self._trace_solve_result(dict(self.final_result))
 

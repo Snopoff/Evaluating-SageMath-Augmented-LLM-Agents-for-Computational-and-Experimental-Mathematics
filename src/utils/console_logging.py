@@ -37,8 +37,12 @@ class ConsoleLogger:
         )
         cls._logging_configured = True
 
-    def progress(self, message: str) -> None:
-        self._console.print(f"[cyan]\\[progress][/cyan] {message}")  # type: ignore
+    def log(self, message: str, level: str = "info", color: str = "white", *args, **kwargs) -> None:
+        self._console.print(f"[{color}]\\[{level}][/{color}] {message}", *args, **kwargs)
+
+    def progress(self, message: str, *args, **kwargs) -> None:
+        self.log(message, level="progress", color="cyan", *args, **kwargs)
+        # self._console.print(f"[cyan]\\[progress][/cyan] {message}", *args, **kwargs)
 
     @staticmethod
     def _normalize_payload(value: Any) -> Any:
@@ -143,12 +147,18 @@ class ConsoleLogger:
         stop_reason: str,
         tool_traces: list[dict[str, Any]],
         verified_sage_code: str = "",
+        explanation: str = "",
+        verified_claims: list[str] | None = None,
+        final_payload: Mapping[str, Any] | None = None,
     ) -> None:
         self.final_result = dict(
             self._normalize_payload(
                 {
                     "agent_id": agent_id,
                     "final_answer": final_answer,
+                    "explanation": explanation,
+                    "verified_claims": list(verified_claims or []),
+                    "final_payload": dict(final_payload or {}),
                     "turn_count": turn_count,
                     "stop_reason": stop_reason,
                     "tool_traces": tool_traces,
