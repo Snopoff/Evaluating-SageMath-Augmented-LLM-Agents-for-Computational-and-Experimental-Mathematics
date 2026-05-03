@@ -1,0 +1,75 @@
+{
+  "benchmark_name": "realmathbenchmark_sagemath_discovery_5",
+  "source_dataset": "RealMathBenchmark",
+  "source_file": "data/processed/realmathbenchmark_full.jsonl",
+  "problem_count": 5,
+  "selection_note": "SageMath-oriented benchmark slice selected for computational exploration: the agent can instantiate small examples, compute invariants, infer a formula, check it on more cases, and then answer.",
+  "selection_criteria": [
+    "The mathematical object is constructible from the prompt with standard Sage/Python primitives.",
+    "The expected answer is a discoverable formula or structural pattern, not just extraction from text.",
+    "Small cases can be computed quickly and used for hypothesis generation or counterexample search.",
+    "The final answer still requires mathematical generalization beyond a single computation."
+  ],
+  "problems": [
+    {
+      "id": "realmathbenchmark-00009",
+      "index": 9,
+      "arxiv_id": "2412.19095",
+      "arxiv_version": 1,
+      "link": "http://arxiv.org/abs/2412.19095v1",
+      "domain": "graph theory",
+      "task_type": "chromatic polynomial of graph joins",
+      "sage_affordance": "Construct small graph pairs, compute chromatic polynomials of G1, G2, and their join, then fit the shifted-product formula.",
+      "question": "Let $G_1$ and $G_2$ be two graphs with orders $n_1$ and $n_2$, respectively, and let $G_1+G_2$ denote their join. What is the expression for the chromatic polynomial $\\mu(G_1+G_2;x)$ in terms of $x$, $n_1$, $n_2$, and the chromatic polynomials $\\mu(G_1,\\cdot)$ and $\\mu(G_2,\\cdot)$?",
+      "answer": "$$\\mu(G_1+G_2;x)=\\frac{x(x-n_1-n_2)}{(x-n_1)(x-n_2)}\\,\\mu(G_1,x-n_2)\\,\\mu(G_2,x-n_1).$$"
+    },
+    {
+      "id": "realmathbenchmark-00352",
+      "index": 352,
+      "arxiv_id": "2412.19095",
+      "arxiv_version": 1,
+      "link": "http://arxiv.org/abs/2412.19095v1",
+      "domain": "spectral graph theory",
+      "task_type": "distance Laplacian spectrum of graph joins",
+      "sage_affordance": "Build joins of small graphs, compute distance matrices and distance Laplacian eigenvalues, compare them with the original Laplacian spectra.",
+      "question": "Consider two graphs $G_1$ on $n_1$ vertices with Laplacian eigenvalues $0 = \\lambda_1 \\le \\lambda_2 \\le \\cdots \\le \\lambda_{n_1}$ and $G_2$ on $n_2$ vertices with Laplacian eigenvalues $0 = \\mu_1 \\le \\mu_2 \\le \\cdots \\le \\mu_{n_2}$. What is the distance Laplacian spectrum of the join graph $G_1+G_2$, including the explicit form of each eigenvalue and its multiplicity, expressed in terms of $n_1$, $n_2$, $\\lambda_i$, and $\\mu_j$?",
+      "answer": "The distance Laplacian spectrum of $G_1+G_2$ consists of the following eigenvalues: \\[ n_2+2n_1-\\lambda_i \\quad \\text{with multiplicity } 1 \\quad \\text{for } i=2,3,\\ldots,n_1, \\] \\[ n_1+2n_2-\\mu_j \\quad \\text{with multiplicity } 1 \\quad \\text{for } j=2,3,\\ldots,n_2, \\] and the eigenvalues $0$ and $n_1+n_2$, each with multiplicity $1$."
+    },
+    {
+      "id": "realmathbenchmark-00525",
+      "index": 525,
+      "arxiv_id": "2205.02276",
+      "arxiv_version": 2,
+      "link": "http://arxiv.org/abs/2205.02276v2",
+      "domain": "spectral graph theory",
+      "task_type": "adjacency spectrum of line graphs",
+      "sage_affordance": "Use cycles, complete graphs, cubes, and other regular graphs; compute line graphs and adjacency spectra to infer the eigenvalue shift and extra -2 eigenvalues.",
+      "question": "Suppose that \\( G \\) is an \\( r \\)-regular graph of order \\( n \\) and size \\( m \\) with spectrum \\( \\mathrm{Sp}_A(G) = \\{r, \\lambda_2, \\ldots, \\lambda_n\\} \\). What is the regularity of the line graph \\( \\mathcal{L}(G) \\) and what is the spectrum \\( \\mathrm{Sp}_A(\\mathcal{L}(G)) \\) expressed in terms of \\( r \\), \\( \\lambda_2, \\ldots, \\lambda_n \\), \\( m \\), and \\( n \\)?",
+      "answer": "The line graph \\( \\mathcal{L}(G) \\) is \\( (2r-2) \\)-regular and its spectrum is \\( \\{2r-2, \\lambda_2 + r - 2, \\ldots, \\lambda_n + r - 2, -2^{m-n}\\} \\)."
+    },
+    {
+      "id": "realmathbenchmark-00439",
+      "index": 439,
+      "arxiv_id": "2412.20775",
+      "arxiv_version": 6,
+      "link": "http://arxiv.org/abs/2412.20775v6",
+      "domain": "spectral graph theory",
+      "task_type": "adjacency spectrum of Turan graphs",
+      "sage_affordance": "Construct complete multipartite Turan graphs for many (n,k), compute adjacency spectra, and separate the regular s=0 case from the irregular 1<=s<=k-1 case.",
+      "question": "Let $q,s\\in \\mathbb{N}$ be such that $n=kq+s$ with $0\\le s\\le k-1$. Determine the $\\mathcal{A}$-spectrum of the Turan graph $T(n,k)$ in both cases: (a) when $1\\le s\\le k-1$, and (b) when $s=0$ (noting that in this case $q=n/k$).",
+      "answer": "For (a) when $1\\le s\\le k-1$, the $\\mathcal{A}$-spectrum of $T(n,k)$ is given by \\[ \\sigma_{\\mathcal{A}}(T(n,k)) = \\left\\{ [-q-1]^{\\;s-1},\\; [-q]^{\\;k-s-1},\\; [0]^{\\;n-k} \\right\\} \\cup \\left\\{ \\frac{1}{2}\\Bigl(n-2q-1 \\pm \\sqrt{\\bigl(n-2(q+1)s+1\\bigr)^2+4q(q+1)s(k-s)}\\Bigr) \\right\\}, \\] and for (b) when $s=0$ (with $q=\\frac{n}{k}$), the $\\mathcal{A}$-spectrum of $T(n,k)$ is \\[ \\sigma_{\\mathcal{A}}(T(n,k)) = \\left\\{ [-q]^{\\;k-1},\\; [0]^{\\;n-k},\\; (k-1)q \\right\\}. \\]"
+    },
+    {
+      "id": "realmathbenchmark-00446",
+      "index": 446,
+      "arxiv_id": "2501.00171",
+      "arxiv_version": 1,
+      "link": "http://arxiv.org/abs/2501.00171v1",
+      "domain": "finite fields and linear algebra",
+      "task_type": "counting low-rank Hankel matrices",
+      "sage_affordance": "Enumerate small finite fields and all Hankel matrices of small sizes, compute ranks, and fit the count as a power of q.",
+      "question": "Suppose that $k, \\ell \\in \\mathbb{N}$, $F$ is a finite field with $|F| = q$, and $r \\leq \\min\\{k, \\ell\\} - 1$. What is the number of Hankel matrices $\\Delta_{\\alpha}(k,\\ell)$ over $F$ with rank at most $r$?",
+      "answer": "$q^{2r}$"
+    }
+  ]
+}

@@ -18,7 +18,8 @@ artifacts/
 wandb/
 
 # Data
-data/
+data/raw
+data/processed/realmathbenchmark_full.jsonl
 
 # MacOS
 .DS_Store
