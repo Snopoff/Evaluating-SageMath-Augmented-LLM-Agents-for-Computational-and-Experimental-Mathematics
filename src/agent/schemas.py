@@ -17,17 +17,17 @@ class SageExecArgs(BaseModel):
 
 class FinalAnswerArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    
+    explanation: str = Field(
+        description="Post-hoc summary of the final answer in 3-6 sentences: the decisive identity / lemma and any sanity check used. Not a full derivation (that belongs in internal reasoning) and not a restatement of the question.",
+    )
 
     final_answer: str = Field(
-        min_length=1,
         description=(
-            "The exact, concise answer to score. Put only the checkable result here, not the derivation or verification narrative."
+            "The final answer to score. Put only the checkable result here, not the narrative and reasoning."
         ),
     )
-    explanation: str = Field(
-        min_length=1,
-        description="Brief explanation or verification summary supporting the final answer.",
-    )
+
     confidence: int = Field(
         ge=1,
         le=5,
