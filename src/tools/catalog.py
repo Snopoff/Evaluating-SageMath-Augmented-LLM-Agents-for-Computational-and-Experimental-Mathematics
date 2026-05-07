@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool, tool
+from pydantic import BaseModel
 
-from src.agent.schemas import FinalAnswerArgs, SageExecArgs
+from src.agent.schemas import SageExecArgs, SageFinalAnswerArgs
 from src.agent.verification import normalize_verification_payload
 from src.sage.runtime import SageRuntime
 
@@ -57,16 +56,25 @@ def make_sage_exec_tool(runtime: SageRuntime, usage_notes: str = "") -> BaseTool
     return _sage_exec
 
 
-def make_submit_final_answer_tool() -> BaseTool:
-    @tool(FINAL_ANSWER_TOOL_NAME, args_schema=FinalAnswerArgs)
-    def _submit_final_answer(final_answer: str, explanation: str, verified_claims: list[str] | None = None) -> str:
+def make_submit_final_answer_tool(args_schema: type[BaseModel] = SageFinalAnswerArgs) -> BaseTool:
+    @tool(FINAL_ANSWER_TOOL_NAME, args_schema=args_schema)
+    def _submit_final_answer(
+        final_answer: str,
+        explanation: str,
+        confidence: int,
+        verified_claims: list[str] | None = None,
+    ) -> str:
         """Submit the structured final answer to the math problem."""
 
-        payload = FinalAnswerArgs(
-            final_answer=final_answer,
-            explanation=explanation,
-            verified_claims=verified_claims or [],
-        )
+        payload_kwargs: dict[str, Any] = {
+            "final_answer": final_answer,
+            "explanation": explanation,
+            "confidence": confidence,
+        }
+        if "verified_claims" in getattr(args_schema, "model_fields", {}):
+            payload_kwargs["verified_claims"] = verified_claims
+
+        payload = args_schema(**payload_kwargs)
         return payload.model_dump_json()
 
     return _submit_final_answer

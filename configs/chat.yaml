@@ -8,8 +8,11 @@ defaults:
   - sage_skill: v2
   - _self_
 
-model_name: deepseek-v32/latest #gpt-5.5-2026-04-23 #deepseek-v32/latest #gpt-oss-20b/latest #qwen3:4b-thinking-2507-q4_K_M
+controller.max_steps: 1
+
+model_name: deepseek-v32/latest #gpt-5.5-2026-04-23 #gpt-oss-20b/latest #qwen3:4b-thinking-2507-q4_K_M
 mode: chat
 progress_logs: true
+
 tools:
   - sage_exec

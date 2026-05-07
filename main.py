@@ -34,11 +34,12 @@ def main(cfg: DictConfig) -> None:
 
     model = hu.instantiate(cfg.model)
 
-    runtime = hu.instantiate(cfg.sage, logger=logger)
-
     tool_names = cfg.get("tools", [])
     if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):
         raise ValueError("Config 'tools' must be a list of tool names.")
+    tool_names = list(tool_names)
+
+    runtime = hu.instantiate(cfg.sage, logger=logger) if tool_names or mode == "benchmark" else None
 
     sage_usage_notes = ""
     if "sage_exec" in tool_names and cfg.get("sage_skill") is not None:
@@ -55,13 +56,19 @@ def main(cfg: DictConfig) -> None:
         if factory is None:
             available_text = ", ".join(available_names) if available_names else "(none)"
             raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
+
+        if runtime is None:
+            raise RuntimeError(f"Tool runtime was not initialized for tool {tool_name!r}.")
         usage_notes = sage_usage_notes if tool_name == "sage_exec" else ""
         tools.append(factory(runtime, usage_notes))
 
     if progress_logs:
-        logger.progress(f"initialized tools: [bold orange1]{', '.join(tool.name for tool in tools)}[/bold orange1]")
+        initialized_tools = ", ".join(tool.name for tool in tools) if tools else "(none)"
+        logger.progress(f"initialized tools: [bold orange1]{initialized_tools}[/bold orange1]")
 
-    controller = hu.instantiate(cfg.controller, model=model, tools=tools, logger=logger, system_prompt=system_prompt)
+    controller = hu.instantiate(
+        cfg.controller, model=model, tools=tools, logger=logger, system_prompt=system_prompt, model_name=cfg.model_name
+    )
 
     if mode == "chat":
         prompt = resolve_prompt(cfg.prompt, logger=logger)

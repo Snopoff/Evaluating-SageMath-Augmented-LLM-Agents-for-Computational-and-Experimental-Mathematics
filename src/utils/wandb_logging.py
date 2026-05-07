@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import importlib
 import json
 import tempfile
@@ -152,6 +150,7 @@ class WandbWeaveLogger(ConsoleLogger):
         tool_traces: list[dict[str, Any]],
         verified_sage_code: str = "",
         explanation: str = "",
+        confidence: int | None = None,
         verified_claims: list[str] | None = None,
         final_payload: Mapping[str, Any] | None = None,
     ) -> None:
@@ -163,6 +162,7 @@ class WandbWeaveLogger(ConsoleLogger):
             tool_traces=tool_traces,
             verified_sage_code=verified_sage_code,
             explanation=explanation,
+            confidence=confidence,
             verified_claims=verified_claims,
             final_payload=final_payload,
         )

@@ -2,6 +2,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SageExecArgs(BaseModel):
+    """Arguments for executing Sage code as part of an agent's reasoning process."""
+
     code: str = Field(
         min_length=1,
         description=(
@@ -26,7 +28,14 @@ class FinalAnswerArgs(BaseModel):
         min_length=1,
         description="Brief explanation or verification summary supporting the final answer.",
     )
+    confidence: int = Field(
+        ge=1,
+        le=5,
+        description="Confidence in the final answer on a 1-5 scale, where 5 is highest.",
+    )
+
+
+class SageFinalAnswerArgs(FinalAnswerArgs):
     verified_claims: list[str] = Field(
-        default_factory=list,
-        description="Optional short list of final claims supported by successful Sage output or explicit reasoning.",
+        description="Short list of final claims supported by successful Sage output or explicit reasoning.",
     )

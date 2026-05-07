@@ -4,4 +4,3 @@ config:
   max_steps: 15
   progress_logs: true
   require_verification_for_final: false
-  require_structured_final: true

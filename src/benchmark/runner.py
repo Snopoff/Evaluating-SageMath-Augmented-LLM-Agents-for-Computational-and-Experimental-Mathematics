@@ -137,6 +137,7 @@ class BenchmarkRunner:
                             "reference_answer": reference_answer,
                             "predicted_answer": solve_result.final_answer,
                             "explanation": solve_result.explanation,
+                            "confidence": solve_result.confidence,
                             "verified_claims": solve_result.verified_claims,
                             "final_payload": solve_result.final_payload,
                             "normalized_prediction": score.normalized_prediction,

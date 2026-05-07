@@ -116,9 +116,11 @@ class SageExecToolFactoryTests(unittest.TestCase):
         self.assertEqual(final_tool.name, FINAL_ANSWER_TOOL_NAME)
         self.assertIn("final_answer", final_tool.args)
         self.assertIn("explanation", final_tool.args)
+        self.assertIn("confidence", final_tool.args)
+        self.assertIn("verified_claims", final_tool.args)
         self.assertEqual(
-            final_tool.invoke({"final_answer": "4", "explanation": "verified"}),
-            '{"final_answer":"4","explanation":"verified","verified_claims":[]}',
+            final_tool.invoke({"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": ["computed"]}),
+            '{"final_answer":"4","explanation":"verified","confidence":5,"verified_claims":["computed"]}',
         )
 
 

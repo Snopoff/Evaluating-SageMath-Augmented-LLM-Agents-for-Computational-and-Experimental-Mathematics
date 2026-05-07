@@ -16,6 +16,7 @@ wheels/
 outputs/
 artifacts/
 wandb/
+logs/
 
 # Data
 data/raw

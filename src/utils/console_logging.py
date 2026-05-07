@@ -148,6 +148,7 @@ class ConsoleLogger:
         tool_traces: list[dict[str, Any]],
         verified_sage_code: str = "",
         explanation: str = "",
+        confidence: int | None = None,
         verified_claims: list[str] | None = None,
         final_payload: Mapping[str, Any] | None = None,
     ) -> None:
@@ -157,6 +158,7 @@ class ConsoleLogger:
                     "agent_id": agent_id,
                     "final_answer": final_answer,
                     "explanation": explanation,
+                    "confidence": confidence,
                     "verified_claims": list(verified_claims or []),
                     "final_payload": dict(final_payload or {}),
                     "turn_count": turn_count,
@@ -200,6 +202,43 @@ class ConsoleLogger:
             "token_usage_totals": self.token_usage_totals,
             "artifacts": self.artifacts,
         }
+
+    def save_output(self, output_dir: str | Path, *, prefix: str = "logger", status: str | None = None) -> dict[str, Path]:
+        """Save all console output and trace data to files.
+
+        Args:
+            output_dir: Directory to save outputs to.
+            prefix: Filename prefix for saved files (default: "logger").
+            status: Optional status override for the trace payload.
+
+        Returns:
+            Dictionary mapping output type to saved file paths.
+        """
+        import json
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        saved_files: dict[str, Path] = {}
+
+        # Save console output as text
+        console_text_path = output_dir / f"{prefix}_console.txt"
+        self._console.save_text(str(console_text_path))
+        saved_files["console_text"] = console_text_path
+
+        # Save console output as HTML
+        console_html_path = output_dir / f"{prefix}_console.html"
+        self._console.save_html(str(console_html_path))
+        saved_files["console_html"] = console_html_path
+
+        # Save trace payload as JSON
+        trace_payload = self.build_trace_payload(status=status)
+        trace_path = output_dir / f"{prefix}_trace.json"
+        with open(trace_path, "w", encoding="utf-8") as f:
+            json.dump(trace_payload, f, indent=2, ensure_ascii=False)
+        saved_files["trace_json"] = trace_path
+
+        return saved_files
 
     def _record_event(self, kind: str, payload: Mapping[str, Any]) -> None:
         self.events.append({"kind": kind, "payload": dict(self._normalize_payload(dict(payload)))})
