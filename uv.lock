@@ -2093,7 +2093,6 @@ dependencies = [
     { name = "langchain-google-genai" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
-    { name = "pandas" },
     { name = "rich" },
     { name = "rootutils" },
     { name = "wandb" },
@@ -2101,6 +2100,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+analysis = [
+    { name = "pandas" },
+]
 mlx = [
     { name = "mlx", marker = "sys_platform == 'darwin'" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin'" },
@@ -2124,13 +2126,13 @@ requires-dist = [
     { name = "mlx", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = ">=0.31.0" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = ">=0.31.0" },
     { name = "mlx-metal", marker = "sys_platform == 'darwin' and extra == 'mlx'", specifier = ">=0.31.0" },
-    { name = "pandas", specifier = ">=3.0.2" },
+    { name = "pandas", marker = "extra == 'analysis'", specifier = ">=3.0.2" },
     { name = "rich", specifier = ">=14.3.3" },
     { name = "rootutils", specifier = ">=1.0.7" },
     { name = "wandb", specifier = ">=0.22.0" },
     { name = "weave", specifier = ">=0.51.50" },
 ]
-provides-extras = ["mlx"]
+provides-extras = ["mlx", "analysis"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ipykernel", specifier = ">=7.2.0" }]

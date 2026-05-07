@@ -44,6 +44,10 @@ class ConsoleLogger:
         self.log(message, level="progress", color="cyan", *args, **kwargs)
         # self._console.print(f"[cyan]\\[progress][/cyan] {message}", *args, **kwargs)
 
+    @property
+    def run_active(self) -> bool:
+        return self._run_active
+
     @staticmethod
     def _normalize_payload(value: Any) -> Any:
         if isinstance(value, Path):
@@ -146,6 +150,7 @@ class ConsoleLogger:
         turn_count: int,
         stop_reason: str,
         tool_traces: list[dict[str, Any]],
+        token_usage: Mapping[str, int] | None = None,
         verified_sage_code: str = "",
         explanation: str = "",
         confidence: int | None = None,
@@ -163,6 +168,7 @@ class ConsoleLogger:
                     "final_payload": dict(final_payload or {}),
                     "turn_count": turn_count,
                     "stop_reason": stop_reason,
+                    "token_usage": dict(token_usage or {}),
                     "tool_traces": tool_traces,
                     "verified_sage_code": verified_sage_code,
                 }

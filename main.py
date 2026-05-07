@@ -118,12 +118,28 @@ def main(cfg: DictConfig) -> None:
             logger.finish_run(status="failed")
             raise
 
+    if mode == "generate_predictions":
+        cfg.generate_predictions.config.dataset_path = hu.to_absolute_path(str(cfg.generate_predictions.config.dataset_path))
+        runner = hu.instantiate(
+            cfg.generate_predictions,
+            controller=controller,
+            logger=logger,
+        )
+        try:
+            summary = runner.run()
+            print(json.dumps(summary, indent=2, ensure_ascii=False))
+            logger.finish_run(status="completed")
+            return
+        except Exception:
+            logger.finish_run(status="failed")
+            raise
+
     if mode == "test":
         print("Running in test mode: the agent execution is tested.")
         print(model.invoke("What is a transformer model in NLP?"))
         return
 
-    raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat' or 'benchmark'.")
+    raise ValueError(f"Unsupported mode: {mode!r}. Use 'chat', 'benchmark', or 'generate_predictions'.")
 
 
 if __name__ == "__main__":

@@ -58,18 +58,6 @@ def messages_for_logging(messages: Sequence[BaseMessage]) -> list[dict[str, Any]
     return [message_payload(message) for message in messages]
 
 
-def extract_token_usage(message: AIMessage | None) -> dict[str, int | None]:
-    usage = (message.usage_metadata or {}) if message is not None else {}
-    input_tokens = usage.get("input_tokens")
-    output_tokens = usage.get("output_tokens")
-    total_tokens = usage.get("total_tokens")
-    return {
-        "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
-        "output_tokens": output_tokens if isinstance(output_tokens, int) else None,
-        "total_tokens": total_tokens if isinstance(total_tokens, int) else None,
-    }
-
-
 def trace_from_tool_message(turn: int, tool_name: str, tool_args: dict[str, Any], message: ToolMessage) -> dict[str, Any]:
     artifact = message.artifact if isinstance(message.artifact, Mapping) else {}
     ok = bool(artifact.get("ok", message.status != "error"))

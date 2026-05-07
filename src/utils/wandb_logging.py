@@ -48,22 +48,50 @@ class WandbWeaveLogger(ConsoleLogger):
         run_start_payload = self.events[-1]["payload"]
         if was_active:
             if self._wandb_run is not None:
-                self._wandb_run.config.update({"agent_ids": self.run_metadata.get("agent_ids", [])}, allow_val_change=True)
+                self._wandb_run.config.update(
+                    {
+                        "mode": self.mode,
+                        "model_name": self.run_metadata.get("model_name", ""),
+                        "problem_id": self.run_metadata.get("problem_id", ""),
+                        "prediction_batch_id": self.run_metadata.get("prediction_batch_id", ""),
+                        "problem_attempt": self.run_metadata.get("problem_attempt", 1),
+                        "controller_config": self.run_metadata.get("controller_config", {}),
+                        "tool_names": [spec.get("name", "") for spec in self.run_metadata.get("tool_specs", [])],
+                        "agent_ids": self.run_metadata.get("agent_ids", []),
+                    },
+                    allow_val_change=True,
+                )
             self._trace_run_start(dict(run_start_payload))
             return
 
         project_path = f"{self.entity}/{self.project}"
+        problem_id = self.run_metadata.get("problem_id", "")
+        prediction_batch_id = self.run_metadata.get("prediction_batch_id", "")
+        problem_attempt = self.run_metadata.get("problem_attempt", 1)
+        resolved_run_name = self.run_name
+        if resolved_run_name is None and isinstance(problem_id, str) and problem_id.strip():
+            resolved_run_name = problem_id
+            if isinstance(prediction_batch_id, str) and prediction_batch_id.strip():
+                resolved_run_name = f"{resolved_run_name}@{prediction_batch_id}"
+            if isinstance(problem_attempt, int) and problem_attempt > 1:
+                resolved_run_name = f"{resolved_run_name} (attempt {problem_attempt})"
+        resolved_group = self.group
+        if resolved_group is None and isinstance(prediction_batch_id, str) and prediction_batch_id.strip():
+            resolved_group = prediction_batch_id
         self._weave.init(project_path, global_attributes={"mode": self.mode or "unknown"})
         self._wandb_run = self._wandb.init(
             entity=self.entity,
             project=self.project,
-            name=self.run_name,
-            group=self.group,
+            name=resolved_run_name,
+            group=resolved_group,
             tags=self.tags,
             job_type=self.mode or None,
             config={
                 "mode": self.mode,
                 "model_name": self.run_metadata.get("model_name", ""),
+                "problem_id": problem_id,
+                "prediction_batch_id": prediction_batch_id,
+                "problem_attempt": problem_attempt,
                 "controller_config": self.run_metadata.get("controller_config", {}),
                 "tool_names": [spec.get("name", "") for spec in self.run_metadata.get("tool_specs", [])],
                 "agent_ids": self.run_metadata.get("agent_ids", []),
@@ -148,6 +176,7 @@ class WandbWeaveLogger(ConsoleLogger):
         turn_count: int,
         stop_reason: str,
         tool_traces: list[dict[str, Any]],
+        token_usage: Mapping[str, int] | None = None,
         verified_sage_code: str = "",
         explanation: str = "",
         confidence: int | None = None,
@@ -159,6 +188,7 @@ class WandbWeaveLogger(ConsoleLogger):
             final_answer=final_answer,
             turn_count=turn_count,
             stop_reason=stop_reason,
+            token_usage=token_usage,
             tool_traces=tool_traces,
             verified_sage_code=verified_sage_code,
             explanation=explanation,

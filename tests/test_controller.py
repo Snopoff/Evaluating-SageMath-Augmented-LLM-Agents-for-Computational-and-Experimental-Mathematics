@@ -157,6 +157,7 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(result.final_payload["confidence"], 5)
         self.assertEqual(result.final_payload["verified_claims"], ["computed 2 + 2"])
         self.assertEqual(result.final_payload["sage_code"], code)
+        self.assertEqual(result.token_usage, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
         self.assertEqual(result.stop_reason, "finalized")
         self.assertEqual(calls, [{"code": code}])
         self.assertEqual(len(result.tool_traces), 1)
@@ -249,6 +250,7 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(result.tool_traces, [])
         self.assertEqual(result.turn_count, 1)
         self.assertEqual(result.stop_reason, "finalized")
+        self.assertEqual(result.token_usage, {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6})
         self.assertEqual(model.bound_tools, [])
         self.assertEqual(model.bind_kwargs, {})
         self.assertEqual(len(model.invocations), 0)
@@ -643,6 +645,7 @@ class AgentControllerTests(unittest.TestCase):
 
         self.assertEqual(result.stop_reason, "finalized")
         self.assertEqual(logger.run_metadata["question"], "Q")
+        self.assertEqual(result.token_usage, {"input_tokens": 43, "output_tokens": 13, "total_tokens": 56})
         model_events = [event for event in logger.events if event["kind"] == "model_call"]
         self.assertEqual(model_events[0]["payload"]["messages"][0]["content"], "Q")
         self.assertEqual(model_events[0]["payload"]["parsed_payload"]["tool_calls"][0]["name"], SAGE_EXEC_TOOL_NAME)
@@ -655,6 +658,37 @@ class AgentControllerTests(unittest.TestCase):
         self.assertTrue(any("model_reply" in message for message in logger.progress_messages))
         self.assertTrue(any("tool_call" in message and "sage_exec" in message for message in logger.progress_messages))
         self.assertTrue(any("tool_result" in message and "sage_exec" in message for message in logger.progress_messages))
+
+    def test_token_usage_falls_back_to_response_metadata(self) -> None:
+        class _ResponseMetadataStructuredRunnable:
+            def invoke(self, messages: list[Any]) -> Any:
+                model.structured_invocations.append(list(messages))
+                parsed = model.structured_outputs.pop(0)
+                raw = AIMessage(
+                    content="",
+                    response_metadata={"token_usage": {"prompt_tokens": 8, "completion_tokens": 2, "total_tokens": 10}},
+                )
+                return {"raw": raw, "parsed": parsed, "parsing_error": None}
+
+        class _ResponseMetadataModel(_FakeModel):
+            def with_structured_output(self, schema: Any, **kwargs: Any) -> _ResponseMetadataStructuredRunnable:  # noqa: ARG002
+                self.structured_kwargs = dict(kwargs)
+                return _ResponseMetadataStructuredRunnable()
+
+        model = _ResponseMetadataModel(
+            structured_outputs=[
+                FinalAnswerArgs(
+                    final_answer="4",
+                    explanation="direct",
+                    confidence=4,
+                )
+            ]
+        )
+        controller = AgentController(model=model, tools=[])
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.token_usage, {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10})
 
     def test_initial_message_is_user_question_without_system_prompt(self) -> None:
         model = _FakeModel(

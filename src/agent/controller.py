@@ -10,7 +10,6 @@ from src.agent.schemas import FinalAnswerArgs, SageFinalAnswerArgs
 from src.agent.verification import verification_passes
 from src.agent.controller_utils import (
     answer_has_explicit_failure_language,
-    extract_token_usage,
     forced_finalization_message,
     message_payload,
     messages_for_logging,
@@ -38,6 +37,9 @@ class SolveResult:
     tool_traces: list[dict[str, Any]]
     turn_count: int
     stop_reason: str
+    token_usage: dict[str, int] = field(
+        default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    )
     verified_sage_code: str = ""
     explanation: str = ""
     confidence: int = 0
@@ -81,6 +83,7 @@ class AgentController:
         messages: list[BaseMessage] = [SystemMessage(content=self.system_prompt)] if self.system_prompt else []
         messages.append(HumanMessage(content=question))
 
+        self._current_token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         self._start_run(question)
         if self.uses_react:
             return self._solve_with_tools(messages)
@@ -237,6 +240,7 @@ class AgentController:
             explanation="Forced finalization failed: the model did not call submit_final_answer with valid arguments.",
             confidence=1,
             final_payload={"final_answer": "", "explanation": "Forced finalization failed.", "confidence": 1},
+            token_usage=dict(self._current_token_usage),
             tool_traces=tool_traces,
             turn_count=turn,
             stop_reason="forced_finalization_failed",
@@ -254,6 +258,7 @@ class AgentController:
         if parsing_error is not None:
             raise ValueError(f"Structured output parsing failed: {parsing_error}") from parsing_error
 
+        token_usage = self._record_token_usage(raw_message)
         self.logger.log_model_call(
             agent_id=self.agent_id,
             turn=turn,
@@ -261,7 +266,7 @@ class AgentController:
             messages=messages_for_logging(messages),
             raw_response=json.dumps(message_payload(raw_message), ensure_ascii=True),
             parsed_payload=parsed.model_dump(),
-            token_usage=extract_token_usage(raw_message),
+            token_usage=token_usage,
         )
         return parsed
 
@@ -269,6 +274,7 @@ class AgentController:
         response = self.model.invoke(messages)
         self._log_model_reply(response)
 
+        token_usage = self._record_token_usage(response)
         self.logger.log_model_call(
             agent_id=self.agent_id,
             turn=turn,
@@ -276,7 +282,7 @@ class AgentController:
             messages=messages_for_logging(messages),
             raw_response=json.dumps(message_payload(response), ensure_ascii=True),
             parsed_payload=message_payload(response),
-            token_usage=extract_token_usage(response),
+            token_usage=token_usage,
         )
         return response
 
@@ -364,6 +370,7 @@ class AgentController:
             explanation=payload.explanation.strip(),
             confidence=payload.confidence,
             final_payload=final_payload,
+            token_usage=dict(self._current_token_usage),
             verified_claims=verified_claims,
             tool_traces=tool_traces,
             turn_count=turn_count,
@@ -391,6 +398,7 @@ class AgentController:
             final_answer=result.final_answer,
             turn_count=result.turn_count,
             stop_reason=result.stop_reason,
+            token_usage=result.token_usage,
             tool_traces=result.tool_traces,
             verified_sage_code=result.verified_sage_code,
             explanation=result.explanation,
@@ -398,6 +406,51 @@ class AgentController:
             verified_claims=result.verified_claims,
             final_payload=result.final_payload,
         )
+
+    def _record_token_usage(self, message: AIMessage | None) -> dict[str, int]:
+        usage = self._token_usage_from_message(message)
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            self._current_token_usage[key] += usage[key]
+        return usage
+
+    @staticmethod
+    def _token_usage_from_message(message: AIMessage | None) -> dict[str, int]:
+        usage_candidates: list[Mapping[str, Any]] = []
+        if message is not None:
+            if isinstance(message.usage_metadata, Mapping):
+                usage_candidates.append(message.usage_metadata)
+            response_metadata = getattr(message, "response_metadata", {})
+            if isinstance(response_metadata, Mapping):
+                token_usage = response_metadata.get("token_usage")
+                if isinstance(token_usage, Mapping):
+                    usage_candidates.append(token_usage)
+                usage = response_metadata.get("usage")
+                if isinstance(usage, Mapping):
+                    usage_candidates.append(usage)
+            additional_kwargs = getattr(message, "additional_kwargs", {})
+            if isinstance(additional_kwargs, Mapping):
+                usage = additional_kwargs.get("usage")
+                if isinstance(usage, Mapping):
+                    usage_candidates.append(usage)
+
+        def _first_int(*keys: str) -> int:
+            for usage in usage_candidates:
+                for key in keys:
+                    value = usage.get(key)
+                    if isinstance(value, int):
+                        return value
+            return 0
+
+        input_tokens = _first_int("input_tokens", "prompt_tokens")
+        output_tokens = _first_int("output_tokens", "completion_tokens")
+        total_tokens = _first_int("total_tokens", "totalTokens")
+        if total_tokens == 0 and (input_tokens or output_tokens):
+            total_tokens = input_tokens + output_tokens
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
 
     def _log(self, *args, **kwargs) -> None:
         if self.config.progress_logs:

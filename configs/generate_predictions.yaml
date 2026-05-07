@@ -1,0 +1,15 @@
+defaults:
+  - model: openai #yandex
+  - controller: default
+  - sage: default
+  - logger: wandb
+  - generate_predictions: default
+  - system_prompt: no-tool
+  - sage_skill: v2
+  - _self_
+
+model_name: gpt-5.5 #deepseek-v32/latest
+mode: generate_predictions
+progress_logs: true
+
+tools: []

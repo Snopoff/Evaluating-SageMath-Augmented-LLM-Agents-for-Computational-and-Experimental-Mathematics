@@ -60,3 +60,16 @@ Equivalently, you can pass the arguments right in CLI
 ```Makefile
 make run model=openai
 ```
+
+Use the same base configs for both Sage-backed and plain runs. For the plain structured
+LLM variants, override only the tool list and, optionally, the system prompt:
+
+```bash
+uv run --env-file .env python main.py --config-name chat model=openai model_name=gpt-5.5 system_prompt=no-tool 'tools=[]'
+uv run --env-file .env python main.py --config-name benchmark system_prompt=no-tool 'tools=[]' benchmark.config.output_dir=outputs/agent_benchmark_5_plain
+```
+
+The same `AgentController` is used for plain and Sage-backed runs. With `tools: []`,
+it makes one structured model call. With `tools: [sage_exec]`, it runs the Sage
+ReAct loop and finalizes with the Sage
+structured schema.

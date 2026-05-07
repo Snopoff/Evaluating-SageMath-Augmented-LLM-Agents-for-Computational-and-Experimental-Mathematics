@@ -20,7 +20,7 @@ logs/
 
 # Data
 data/raw
-data/processed/realmathbenchmark_full.jsonl
+data/processed/realmathbenchmark_full.*
 
 # MacOS
 .DS_Store
@@ -30,3 +30,4 @@ data/processed/realmathbenchmark_full.jsonl
 
 # temp and draft files
 drafts/
+scripts/
