@@ -20,6 +20,7 @@ dependencies = [
     "rich>=14.3.3",
     "rootutils>=1.0.7",
     "python-dotenv>=1.0.0",
+    "sympy>=1.14.0",
 ]
 
 [dependency-groups]
@@ -32,4 +33,4 @@ mlx = [
     "mlx-metal>=0.31.0; sys_platform == 'darwin'",
 ]
 
-analysis = ["pandas>=3.0.2"]
+analysis = ["pandas>=3.0.2", "seaborn>=0.13.2"]

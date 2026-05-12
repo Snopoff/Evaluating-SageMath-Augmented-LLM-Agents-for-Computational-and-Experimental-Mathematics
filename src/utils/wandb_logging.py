@@ -34,6 +34,7 @@ class WandbWeaveLogger(ConsoleLogger):
         self._wandb = importlib.import_module("wandb")
         self._weave = importlib.import_module("weave")
         self._wandb_run: Any | None = None
+        self._weave_active = False
         self._model_call_index = 0
         self._trace_run_start = self._weave.op(name="llmxcas_run_start")(self._trace_run_start_payload)
         self._trace_model_call = self._weave.op(name="llmxcas_model_call")(self._trace_model_call_payload)
@@ -79,6 +80,7 @@ class WandbWeaveLogger(ConsoleLogger):
         if resolved_group is None and isinstance(prediction_batch_id, str) and prediction_batch_id.strip():
             resolved_group = prediction_batch_id
         self._weave.init(project_path, global_attributes={"mode": self.mode or "unknown"})
+        self._weave_active = True
         self._wandb_run = self._wandb.init(
             entity=self.entity,
             project=self.project,
@@ -218,27 +220,40 @@ class WandbWeaveLogger(ConsoleLogger):
     def finish_run(self, *, status: str) -> None:
         super().finish_run(status=status)
         if self._wandb_run is None:
+            self._finish_weave()
             return
 
-        trace_path = self._write_trace_artifact(status=status)
-        self.log_artifact(
-            name=f"{self.mode or 'run'}-trace",
-            path=trace_path,
-            artifact_type="llmxcas-trace",
-            metadata={"status": status},
-        )
+        wandb_run = self._wandb_run
+        try:
+            trace_path = self._write_trace_artifact(status=status)
+            self.log_artifact(
+                name=f"{self.mode or 'run'}-trace",
+                path=trace_path,
+                artifact_type="llmxcas-trace",
+                metadata={"status": status},
+            )
 
-        tool_call_count = sum(1 for event in self.events if event.get("kind") == "tool_call")
-        self._wandb_run.summary["event_count"] = len(self.events)
-        self._wandb_run.summary["tool_call_count"] = tool_call_count
-        self._wandb_run.summary["agent_count"] = len(self.final_results)
-        self._wandb_run.summary["input_tokens"] = self.token_usage_totals.get("input_tokens", 0)
-        self._wandb_run.summary["output_tokens"] = self.token_usage_totals.get("output_tokens", 0)
-        self._wandb_run.summary["total_tokens"] = self.token_usage_totals.get("total_tokens", 0)
-        self._wandb_run.summary["stop_reason"] = self.final_result.get("stop_reason", status)
-        self._wandb_run.summary["turn_count"] = self.final_result.get("turn_count", 0)
-        self._wandb_run.finish()
-        self._wandb_run = None
+            tool_call_count = sum(1 for event in self.events if event.get("kind") == "tool_call")
+            wandb_run.summary["event_count"] = len(self.events)
+            wandb_run.summary["tool_call_count"] = tool_call_count
+            wandb_run.summary["agent_count"] = len(self.final_results)
+            wandb_run.summary["input_tokens"] = self.token_usage_totals.get("input_tokens", 0)
+            wandb_run.summary["output_tokens"] = self.token_usage_totals.get("output_tokens", 0)
+            wandb_run.summary["total_tokens"] = self.token_usage_totals.get("total_tokens", 0)
+            wandb_run.summary["stop_reason"] = self.final_result.get("stop_reason", status)
+            wandb_run.summary["turn_count"] = self.final_result.get("turn_count", 0)
+        finally:
+            wandb_run.finish()
+            self._wandb_run = None
+            self._finish_weave()
+
+    def _finish_weave(self) -> None:
+        if not self._weave_active:
+            return
+        finish = getattr(self._weave, "finish", None)
+        if callable(finish):
+            finish()
+        self._weave_active = False
 
     def _write_trace_artifact(self, *, status: str) -> Path:
         payload = self.build_trace_payload(status=status)

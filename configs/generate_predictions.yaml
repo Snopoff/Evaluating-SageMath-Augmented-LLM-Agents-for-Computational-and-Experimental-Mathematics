@@ -1,5 +1,5 @@
 defaults:
-  - model: openai #yandex
+  - model: anthropic #openai #yandex
   - controller: default
   - sage: default
   - logger: wandb
@@ -8,7 +8,7 @@ defaults:
   - sage_skill: v2
   - _self_
 
-model_name: gpt-5.5 #deepseek-v32/latest
+model_name: claude-opus-4-7 #gpt-5.5 #deepseek-v32/latest
 mode: generate_predictions
 progress_logs: true
 

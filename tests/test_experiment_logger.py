@@ -69,10 +69,14 @@ class _FakeWeaveModule:
     def __init__(self) -> None:
         self.init_calls: list[dict[str, object]] = []
         self.trace_calls: list[dict[str, object]] = []
+        self.finish_calls = 0
 
     def init(self, project: str, global_attributes=None):
         self.init_calls.append({"project": project, "global_attributes": dict(global_attributes or {})})
         return object()
+
+    def finish(self) -> None:
+        self.finish_calls += 1
 
     def op(self, name: str):
         def _decorator(func):
@@ -193,6 +197,7 @@ class ExperimentLoggerTests(unittest.TestCase):
         self.assertEqual(run.history[0]["model_call/output_tokens"], 5)
         self.assertEqual(run.history[0]["model_call/total_tokens"], 15)
         self.assertEqual(len(fake_weave.init_calls), 1)
+        self.assertEqual(fake_weave.finish_calls, 1)
         self.assertTrue(any(call["name"] == "llmxcas_run_start" for call in fake_weave.trace_calls))
         self.assertTrue(any(call["name"] == "llmxcas_model_call" for call in fake_weave.trace_calls))
         self.assertTrue(any(call["name"] == "llmxcas_solve_result" for call in fake_weave.trace_calls))

@@ -5,3 +5,6 @@ defaults:
 _target_: langchain_anthropic.ChatAnthropic
 model: ${model_name}
 api_key: ${oc.env:ANTHROPIC_API_KEY}
+thinking:
+  type: adaptive
+  display: summarized

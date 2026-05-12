@@ -1,7 +1,6 @@
 import json
 import os
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,8 +27,6 @@ class GeneratePredictionsConfig:
     question_field: str = "question"
     ground_truth_field: str = "answer"
     id_field: str = "id"
-    predictions_file: str = "predictions.jsonl"
-    summary_file: str = "summary.json"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset_path", Path(self.dataset_path))
@@ -38,6 +35,8 @@ class GeneratePredictionsConfig:
 
 class GeneratePredictionsRunner:
     """Runs the agent on a dataset without scoring answers."""
+
+    FILE_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M"
 
     def __init__(
         self,
@@ -53,11 +52,11 @@ class GeneratePredictionsRunner:
         rows = self._load_rows(self.config.dataset_path, self.config.limit)
         self._progress(f"loaded rows={len(rows)}")
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
-        prediction_batch_id = f"generate_predictions_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-
-        predictions_path = self.config.output_dir / self.config.predictions_file
-        summary_path = self.config.output_dir / self.config.summary_file
+        timestamp = time.strftime(self.FILE_TIMESTAMP_FORMAT)
+        predictions_path = self.config.output_dir / f"predictions_{timestamp}.json"
+        summary_path = self.config.output_dir / f"summary_{timestamp}.json"
         summary = {
+            "model": self.controller.model.model_name,
             "rows": len(rows),
             "completed_rows": 0,
             "successful_rows": 0,
@@ -65,7 +64,6 @@ class GeneratePredictionsRunner:
             "dataset_path": str(self.config.dataset_path),
             "predictions_file": str(predictions_path),
             "summary_file": str(summary_path),
-            "prediction_batch_id": prediction_batch_id,
         }
         self._write_summary(summary_path, summary)
 
@@ -82,7 +80,6 @@ class GeneratePredictionsRunner:
                     solve_result, solve_time_sec = self._solve_problem(
                         question=question,
                         problem_id=problem_id,
-                        prediction_batch_id=prediction_batch_id,
                     )
                     payload = {
                         "id": problem_id,
@@ -128,7 +125,6 @@ class GeneratePredictionsRunner:
                 "dataset_path": str(self.config.dataset_path),
                 "limit": self.config.limit,
                 "rows": len(rows),
-                "prediction_batch_id": prediction_batch_id,
             }
             self.logger.log_artifact(
                 name="generate-predictions",
@@ -167,7 +163,6 @@ class GeneratePredictionsRunner:
         *,
         question: str,
         problem_id: str,
-        prediction_batch_id: str,
     ) -> tuple[Any, float]:
         run_logger = self._run_logger()
         last_error: Exception | None = None
@@ -176,7 +171,6 @@ class GeneratePredictionsRunner:
                 run_logger,
                 question=question,
                 problem_id=problem_id,
-                prediction_batch_id=prediction_batch_id,
                 attempt=attempt,
             )
             solve_started_at = time.perf_counter()
@@ -208,7 +202,6 @@ class GeneratePredictionsRunner:
         *,
         question: str,
         problem_id: str,
-        prediction_batch_id: str,
         attempt: int,
     ) -> None:
         if logger is None or not self.config.separate_logger_runs:
@@ -217,7 +210,6 @@ class GeneratePredictionsRunner:
             metadata={
                 "problem_id": problem_id,
                 "question": question,
-                "prediction_batch_id": prediction_batch_id,
                 "problem_attempt": attempt,
             }
         )

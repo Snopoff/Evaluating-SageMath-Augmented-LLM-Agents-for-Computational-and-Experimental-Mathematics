@@ -71,8 +71,6 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
                 dataset_path=dataset_path,
                 output_dir=tmp_path,
                 limit=1,
-                predictions_file="predictions.jsonl",
-                summary_file="summary.json",
             )
             runner = GeneratePredictionsRunner(
                 controller=_FakeController(logger),
@@ -83,9 +81,12 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             summary = runner.run()
 
             self.assertEqual(summary["rows"], 1)
-            prediction_path = tmp_path / "predictions.jsonl"
+            prediction_path = Path(summary["predictions_file"])
+            summary_path = Path(summary["summary_file"])
             self.assertTrue(prediction_path.exists())
-            self.assertTrue((tmp_path / "summary.json").exists())
+            self.assertTrue(summary_path.exists())
+            self.assertRegex(prediction_path.name, r"^predictions_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}\.jsonl$")
+            self.assertRegex(summary_path.name, r"^summary_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}\.json$")
 
             row = json.loads(prediction_path.read_text(encoding="utf-8").strip())
             self.assertEqual(row["id"], "problem-1")
@@ -122,8 +123,6 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
                 output_dir=tmp_path,
                 limit=-1,
                 separate_logger_runs=True,
-                predictions_file="predictions.jsonl",
-                summary_file="summary.json",
             )
             runner = GeneratePredictionsRunner(
                 controller=_FakeController(logger),
@@ -136,7 +135,7 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             self.assertEqual(summary["rows"], 2)
             rows = [
                 json.loads(line)
-                for line in (tmp_path / "predictions.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in Path(summary["predictions_file"]).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
             self.assertEqual(len(rows), 2)
@@ -173,9 +172,10 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
 
             self.assertEqual(summary["rows"], 1)
             self.assertEqual(controller.solve_calls, 2)
+            prediction_path = Path(summary["predictions_file"])
             rows = [
                 json.loads(line)
-                for line in (tmp_path / "predictions.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in prediction_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
             self.assertEqual(len(rows), 1)
@@ -205,8 +205,6 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
                 retry_backoff_sec=0.0,
                 sleep_sec_between_problems=0.0,
                 continue_on_problem_error=True,
-                predictions_file="predictions.jsonl",
-                summary_file="summary.json",
             )
             runner = GeneratePredictionsRunner(
                 controller=controller,
@@ -221,7 +219,7 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             self.assertEqual(summary["successful_rows"], 0)
             rows = [
                 json.loads(line)
-                for line in (tmp_path / "predictions.jsonl").read_text(encoding="utf-8").splitlines()
+                for line in Path(summary["predictions_file"]).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
             self.assertEqual(len(rows), 2)
