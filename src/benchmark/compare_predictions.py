@@ -32,6 +32,15 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
     comparator = SympyAnswerComparator()
     output_path = config.output_path or _default_output_path(config.input_path)
     summary_path = config.summary_path or _default_summary_path(config.input_path)
+    if summary_path.resolve(strict=False) == config.input_path.resolve(strict=False):
+        summary_path = _fallback_summary_path(config.input_path)
+    if output_path.resolve(strict=False) in {
+        config.input_path.resolve(strict=False),
+        summary_path.resolve(strict=False),
+    }:
+        output_path = _default_output_path(config.input_path)
+    if output_path.resolve(strict=False) == summary_path.resolve(strict=False):
+        output_path = config.input_path.with_name(f"{config.input_path.stem}_comparison_rows.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -42,57 +51,61 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
     missing_prediction = 0
     missing_reference = 0
     timed_out_rows = 0
+    results: list[dict[str, Any]] = []
+
+    for index, row in enumerate(rows):
+        problem_id = row.get(config.id_field)
+        if not isinstance(problem_id, str):
+            problem_id = f"row-{index + 1:05d}"
+
+        question = str(row.get(config.question_field, ""))
+        prediction_value, prediction_field = _resolve_first_present(row, config.prediction_sympy_fields)
+        reference_value, reference_field = _resolve_first_present(row, config.reference_sympy_fields)
+
+        prediction_sympy = comparator.coerce(prediction_value)
+        reference_sympy = comparator.coerce(reference_value)
+        score, timed_out = _score_with_timeout(
+            comparator=comparator,
+            prediction=prediction_sympy,
+            reference=reference_sympy,
+            timeout_sec=config.per_row_timeout_sec,
+        )
+
+        total += 1
+        if _is_missing_sympy_answer(prediction_sympy):
+            missing_prediction += 1
+        if _is_missing_sympy_answer(reference_sympy):
+            missing_reference += 1
+        if timed_out:
+            timed_out_rows += 1
+        if score.correct:
+            correct += 1
+            if score.match_type == "exact":
+                exact_correct += 1
+            if score.match_type == "symbolic":
+                print(f"Symbolic match for problem ID {problem_id}")
+                symbolic_correct += 1
+
+        result_row = dict(row)
+        result_row.update(
+            {
+                "id": problem_id,
+                "question": question,
+                "prediction_sympy_answer": prediction_sympy,
+                "reference_sympy_answer": reference_sympy,
+                "prediction_sympy_field": prediction_field,
+                "reference_sympy_field": reference_field,
+                "normalized_prediction": score.normalized_prediction,
+                "normalized_reference": score.normalized_reference,
+                "correct": score.correct,
+                "matches_reference": score.correct,
+                "match_type": score.match_type,
+            }
+        )
+        results.append(result_row)
 
     with output_path.open("w", encoding="utf-8") as handle:
-        for index, row in enumerate(rows):
-            problem_id = row.get(config.id_field)
-            if not isinstance(problem_id, str):
-                problem_id = f"row-{index + 1:05d}"
-
-            question = str(row.get(config.question_field, ""))
-            prediction_value, prediction_field = _resolve_first_present(row, config.prediction_sympy_fields)
-            reference_value, reference_field = _resolve_first_present(row, config.reference_sympy_fields)
-
-            prediction_sympy = comparator.coerce(prediction_value)
-            reference_sympy = comparator.coerce(reference_value)
-            score, timed_out = _score_with_timeout(
-                comparator=comparator,
-                prediction=prediction_sympy,
-                reference=reference_sympy,
-                timeout_sec=config.per_row_timeout_sec,
-            )
-
-            total += 1
-            if _is_missing_sympy_answer(prediction_sympy):
-                missing_prediction += 1
-            if _is_missing_sympy_answer(reference_sympy):
-                missing_reference += 1
-            if timed_out:
-                timed_out_rows += 1
-            if score.correct:
-                correct += 1
-                if score.match_type == "exact":
-                    exact_correct += 1
-                if score.match_type == "symbolic":
-                    print(f"Symbolic match for problem ID {problem_id}")
-                    symbolic_correct += 1
-
-            result_row = dict(row)
-            result_row.update(
-                {
-                    "id": problem_id,
-                    "question": question,
-                    "prediction_sympy_answer": prediction_sympy,
-                    "reference_sympy_answer": reference_sympy,
-                    "prediction_sympy_field": prediction_field,
-                    "reference_sympy_field": reference_field,
-                    "normalized_prediction": score.normalized_prediction,
-                    "normalized_reference": score.normalized_reference,
-                    "correct": score.correct,
-                    "match_type": score.match_type,
-                }
-            )
-            handle.write(json.dumps(result_row, ensure_ascii=False) + "\n")
+        json.dump(results, handle, indent=2, ensure_ascii=False)
 
     summary = {
         "rows": total,
@@ -255,12 +268,19 @@ def _is_missing_sympy_answer(value: str | list[str]) -> bool:
 
 def _default_output_path(input_path: Path) -> Path:
     timestamp = time.strftime("%Y-%m-%d-%H-%M")
-    return input_path.parent / f"{input_path.stem}_comparison_{timestamp}.jsonl"
+    return input_path.parent / f"{input_path.stem}_comparison_{timestamp}.json"
 
 
 def _default_summary_path(input_path: Path) -> Path:
     timestamp = time.strftime("%Y-%m-%d-%H-%M")
     return input_path.parent / f"{input_path.stem}_comparison_summary_{timestamp}.json"
+
+
+def _fallback_summary_path(input_path: Path) -> Path:
+    summary_path = input_path.parent / "comparison" / input_path.name
+    if summary_path.resolve(strict=False) == input_path.resolve(strict=False):
+        return input_path.with_name(f"{input_path.stem}_comparison_summary.json")
+    return summary_path
 
 
 class _RowTimeout(Exception):
