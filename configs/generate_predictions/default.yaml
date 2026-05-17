@@ -1,17 +1,15 @@
 _target_: src.benchmark.generate_predictions.GeneratePredictionsRunner
 config:
   _target_: src.benchmark.generate_predictions.GeneratePredictionsConfig
-  dataset_path: data/raw/realmathbenchmark_full_cas_assessment_cas_yes.json #data/processed/realmathbenchmark_full.json
+  dataset_path: data/processed/normalized_problems_by_difficulty_hard.json
+  #data/processed/normalized_problems.json #data/raw/realmathbenchmark_full_cas_assessment_cas_yes.json #data/processed/realmathbenchmark_full.json
   output_dir: outputs/generate_predictions
   limit: -1
   progress_logs: true
-  separate_logger_runs: true
+  separate_logger_runs: false
   sleep_sec_between_problems: 2.0
   max_attempts_per_problem: 3
   retry_backoff_sec: 10.0
   retry_backoff_multiplier: 2.0
   continue_on_problem_error: true
   fsync_each_row: false
-  question_field: question
-  ground_truth_field: answer
-  id_field: id

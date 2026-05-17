@@ -60,6 +60,7 @@ def make_submit_final_answer_tool(args_schema: type[BaseModel] = SageFinalAnswer
     @tool(FINAL_ANSWER_TOOL_NAME, args_schema=args_schema)
     def _submit_final_answer(
         final_answer: str,
+        sympy_answer: str | list[str],
         explanation: str,
         confidence: int,
         verified_claims: list[str] | None = None,
@@ -68,6 +69,7 @@ def make_submit_final_answer_tool(args_schema: type[BaseModel] = SageFinalAnswer
 
         payload_kwargs: dict[str, Any] = {
             "final_answer": final_answer,
+            "sympy_answer": sympy_answer,
             "explanation": explanation,
             "confidence": confidence,
         }

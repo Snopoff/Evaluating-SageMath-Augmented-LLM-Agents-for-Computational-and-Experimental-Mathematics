@@ -1,3 +1,4 @@
+import json
 import types
 import unittest
 
@@ -115,13 +116,69 @@ class SageExecToolFactoryTests(unittest.TestCase):
 
         self.assertEqual(final_tool.name, FINAL_ANSWER_TOOL_NAME)
         self.assertIn("final_answer", final_tool.args)
+        self.assertIn("sympy_answer", final_tool.args)
         self.assertIn("explanation", final_tool.args)
         self.assertIn("confidence", final_tool.args)
         self.assertIn("verified_claims", final_tool.args)
         self.assertEqual(
-            final_tool.invoke({"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": ["computed"]}),
-            '{"final_answer":"4","explanation":"verified","confidence":5,"verified_claims":["computed"]}',
+            json.loads(
+                final_tool.invoke(
+                    {
+                        "final_answer": "4",
+                        "sympy_answer": "4",
+                        "explanation": "verified",
+                        "confidence": 5,
+                        "verified_claims": ["computed"],
+                    }
+                )
+            ),
+            {
+                "explanation": "verified",
+                "final_answer": "4",
+                "sympy_answer": "4",
+                "confidence": 5,
+                "verified_claims": ["computed"],
+            },
         )
+
+    def test_submit_final_answer_tool_rejects_latex_or_caret_sympy_answer(self) -> None:
+        final_tool = make_submit_final_answer_tool()
+
+        with self.assertRaises(ValidationError):
+            final_tool.invoke(
+                {
+                    "final_answer": "x^2",
+                    "sympy_answer": "x^2",
+                    "explanation": "verified",
+                    "confidence": 5,
+                    "verified_claims": [],
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            final_tool.invoke(
+                {
+                    "final_answer": "$x$",
+                    "sympy_answer": "$x$",
+                    "explanation": "verified",
+                    "confidence": 5,
+                    "verified_claims": [],
+                }
+            )
+
+    def test_submit_final_answer_tool_rejects_non_parseable_sympy_answer(self) -> None:
+        final_tool = make_submit_final_answer_tool()
+
+        with self.assertRaises(ValidationError):
+            final_tool.invoke(
+                {
+                    "final_answer": "x =",
+                    "sympy_answer": "x =",
+                    "explanation": "verified",
+                    "confidence": 5,
+                    "verified_claims": [],
+                }
+            )
 
 
 if __name__ == "__main__":

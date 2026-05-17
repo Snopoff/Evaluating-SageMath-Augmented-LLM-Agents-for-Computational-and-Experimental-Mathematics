@@ -1,25 +1,14 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from src.sage.runtime import SageRuntime
 from src.agent.controller import AgentController
+from src.benchmark.sympy_compare import ScoreResult, SympyAnswer, SympyAnswerComparator
+from src.sage.runtime import SageRuntime
 from src.utils.console_logging import ConsoleLogger
-
-_LATEX_WRAPPERS = [
-    (r"\\[", ""),
-    (r"\\]", ""),
-    (r"\\(", ""),
-    (r"\\)", ""),
-    ("$", ""),
-    (r"\\left", ""),
-    (r"\\right", ""),
-]
-_ALLOWED_SYMBOLIC_CHARS = re.compile(r"^[0-9A-Za-z_+\-*/^=()\[\]{}.,<>| :]+$")
 
 
 @dataclass(frozen=True)
@@ -32,12 +21,12 @@ class BenchmarkConfig:
         limit: Maximum number of dataset rows to process.
         progress_logs: Whether benchmark progress messages are enabled.
         question_field: Input field name containing the benchmark prompt.
-        answer_field: Input field name containing the reference answer.
+        answer_field: Input field name containing the human-readable reference answer.
+        sympy_answer_field: Input field name containing the normalized SymPy reference answer.
         id_field: Input field name used as the row identifier.
         predictions_file: Output filename for prediction records.
         tool_traces_file: Output filename for tool trace records.
         metrics_file: Output filename for aggregate metrics.
-        symbolic_timeout_sec: Timeout used for symbolic Sage equivalence checks.
     """
 
     dataset_path: Path
@@ -46,32 +35,15 @@ class BenchmarkConfig:
     progress_logs: bool = False
     question_field: str = "question"
     answer_field: str = "answer"
+    sympy_answer_field: str = "sympy_answer"
     id_field: str = "id"
     predictions_file: str = "predictions.jsonl"
     tool_traces_file: str = "tool_traces.jsonl"
     metrics_file: str = "metrics.json"
-    symbolic_timeout_sec: float = 8.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset_path", Path(self.dataset_path))
         object.__setattr__(self, "output_dir", Path(self.output_dir))
-
-
-@dataclass(frozen=True)
-class ScoreResult:
-    """Normalized comparison result for one prediction/reference pair.
-
-    Args:
-        correct: Whether the prediction matched the reference.
-        match_type: Match mode such as ``exact`` or ``symbolic``.
-        normalized_prediction: Canonicalized predicted answer.
-        normalized_reference: Canonicalized reference answer.
-    """
-
-    correct: bool
-    match_type: str
-    normalized_prediction: str
-    normalized_reference: str
 
 
 class BenchmarkRunner:
@@ -94,6 +66,7 @@ class BenchmarkRunner:
         self.config = config
         self.sage_runtime = sage_runtime
         self.logger = logger
+        self._sympy_comparator = SympyAnswerComparator()
 
     def run(self) -> dict[str, Any]:
         rows = list(self._iter_rows(self.config.dataset_path, self.config.limit))
@@ -117,9 +90,12 @@ class BenchmarkRunner:
 
                 question = str(row.get(self.config.question_field, ""))
                 reference_answer = str(row.get(self.config.answer_field, ""))
+                reference_sympy_answer = self._sympy_comparator.coerce(
+                    row.get(self.config.sympy_answer_field, row.get(self.config.answer_field, ""))
+                )
 
                 solve_result = self.controller.solve(question)
-                score = self._score_prediction(solve_result.final_answer, reference_answer)
+                score = self._score_prediction(solve_result.sympy_answer, reference_sympy_answer)
 
                 total += 1
                 if score.correct:
@@ -136,6 +112,8 @@ class BenchmarkRunner:
                             "question": question,
                             "reference_answer": reference_answer,
                             "predicted_answer": solve_result.final_answer,
+                            "reference_sympy_answer": reference_sympy_answer,
+                            "predicted_sympy_answer": solve_result.sympy_answer,
                             "explanation": solve_result.explanation,
                             "confidence": solve_result.confidence,
                             "verified_claims": solve_result.verified_claims,
@@ -283,80 +261,5 @@ class BenchmarkRunner:
                 yield payload
             index = next_index
 
-    def _score_prediction(self, prediction: str, reference: str) -> ScoreResult:
-        norm_prediction = normalize_answer(prediction)
-        norm_reference = normalize_answer(reference)
-
-        if norm_prediction == norm_reference:
-            return ScoreResult(
-                correct=True,
-                match_type="exact",
-                normalized_prediction=norm_prediction,
-                normalized_reference=norm_reference,
-            )
-
-        if self.sage_runtime and self._looks_symbolic(norm_prediction) and self._looks_symbolic(norm_reference):
-            if self._symbolic_equivalent(norm_prediction, norm_reference):
-                return ScoreResult(
-                    correct=True,
-                    match_type="symbolic",
-                    normalized_prediction=norm_prediction,
-                    normalized_reference=norm_reference,
-                )
-
-        return ScoreResult(
-            correct=False,
-            match_type="mismatch",
-            normalized_prediction=norm_prediction,
-            normalized_reference=norm_reference,
-        )
-
-    def _symbolic_equivalent(self, lhs: str, rhs: str) -> bool:
-        if self.sage_runtime is None:
-            return False
-
-        lhs_expr = self._equation_to_expression(lhs)
-        rhs_expr = self._equation_to_expression(rhs)
-        snippet = f"expr = SR((({lhs_expr})-({rhs_expr})))\nRESULT = bool(expr.simplify_full() == 0)"
-
-        result = self.sage_runtime.execute_sage_code(
-            code=snippet,
-            result_var="RESULT",
-            timeout_sec=self.config.symbolic_timeout_sec,
-        )
-        if result.status != "ok":
-            return False
-
-        return normalize_answer(result.result_plain).lower() in {"true", "1"}
-
-    @staticmethod
-    def _looks_symbolic(value: str) -> bool:
-        if not value or len(value) > 400:
-            return False
-        if "\\" in value:
-            return False
-        if re.search(r"[A-Za-z]{4,}", value):
-            return False
-        return bool(_ALLOWED_SYMBOLIC_CHARS.match(value))
-
-    @staticmethod
-    def _equation_to_expression(value: str) -> str:
-        if "==" in value:
-            left, right = value.split("==", 1)
-            return f"(({left})-({right}))"
-        if "=" in value:
-            left, right = value.split("=", 1)
-            return f"(({left})-({right}))"
-        return value
-
-
-def normalize_answer(value: str) -> str:
-    text = value.strip()
-    for old, new in _LATEX_WRAPPERS:
-        text = text.replace(old, new)
-    text = text.replace("\n", " ").replace("\t", " ")
-    text = re.sub(r"\s+", " ", text)
-    text = text.strip()
-    if text.startswith("[") and text.endswith("]"):
-        text = text.removeprefix("[").removesuffix("]")
-    return text
+    def _score_prediction(self, prediction: SympyAnswer, reference: SympyAnswer) -> ScoreResult:
+        return self._sympy_comparator.score(prediction, reference)

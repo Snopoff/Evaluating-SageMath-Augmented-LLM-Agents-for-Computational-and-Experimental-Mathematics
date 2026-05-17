@@ -26,12 +26,26 @@ class _FakeStructuredRunnable:
         self.model.structured_invocations.append(list(messages))
         if not self.model.structured_outputs:
             raise RuntimeError("No more fake structured outputs available")
-        parsed = self.model.structured_outputs.pop(0)
+        entry = self.model.structured_outputs.pop(0)
+        if isinstance(entry, dict) and ("parsed" in entry or "parsing_error" in entry or "raw" in entry):
+            raw = entry.get(
+                "raw",
+                AIMessage(
+                    content="",
+                    usage_metadata={"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+                ),
+            )
+            return {
+                "raw": raw,
+                "parsed": entry.get("parsed"),
+                "parsing_error": entry.get("parsing_error"),
+            }
+
         raw = AIMessage(
             content="",
             usage_metadata={"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
         )
-        return {"raw": raw, "parsed": parsed, "parsing_error": None}
+        return {"raw": raw, "parsed": entry, "parsing_error": None}
 
 
 class _FakeModel:
@@ -129,6 +143,7 @@ class AgentControllerTests(unittest.TestCase):
                             "name": FINAL_ANSWER_TOOL_NAME,
                             "args": {
                                 "final_answer": "4",
+                                "sympy_answer": "4",
                                 "explanation": "verified",
                                 "confidence": 5,
                                 "verified_claims": ["computed 2 + 2"],
@@ -149,10 +164,12 @@ class AgentControllerTests(unittest.TestCase):
         result = controller.solve("What is 2+2?")
 
         self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.sympy_answer, "4")
         self.assertEqual(result.explanation, "verified")
         self.assertEqual(result.confidence, 5)
         self.assertEqual(result.verified_claims, ["computed 2 + 2"])
         self.assertEqual(result.final_payload["final_answer"], "4")
+        self.assertEqual(result.final_payload["sympy_answer"], "4")
         self.assertEqual(result.final_payload["explanation"], "verified")
         self.assertEqual(result.final_payload["confidence"], 5)
         self.assertEqual(result.final_payload["verified_claims"], ["computed 2 + 2"])
@@ -177,6 +194,7 @@ class AgentControllerTests(unittest.TestCase):
                             "name": FINAL_ANSWER_TOOL_NAME,
                             "args": {
                                 "final_answer": "4",
+                                "sympy_answer": "4",
                                 "explanation": "verified",
                                 "confidence": 4,
                                 "verified_claims": [],
@@ -206,11 +224,13 @@ class AgentControllerTests(unittest.TestCase):
             tool_traces=[],
             turn_count=1,
             stop_reason="finalized",
+            sympy_answer="4",
             explanation="Sage verified it.",
             confidence=5,
             verified_claims=["computed 2 + 2"],
             final_payload={
                 "final_answer": "4",
+                "sympy_answer": "4",
                 "explanation": "Sage verified it.",
                 "confidence": 5,
             },
@@ -219,12 +239,14 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(solve_result.explanation, "Sage verified it.")
         self.assertEqual(solve_result.confidence, 5)
         self.assertEqual(solve_result.verified_claims, ["computed 2 + 2"])
+        self.assertEqual(solve_result.sympy_answer, "4")
 
     def test_plain_mode_invokes_structured_output_without_binding_tools(self) -> None:
         model = _FakeModel(
             structured_outputs=[
                 FinalAnswerArgs(
                     final_answer="4",
+                    sympy_answer="4",
                     explanation="direct",
                     confidence=4,
                 )
@@ -242,9 +264,13 @@ class AgentControllerTests(unittest.TestCase):
         result = controller.solve("What is 2+2?")
 
         self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.sympy_answer, "4")
         self.assertEqual(result.explanation, "direct")
         self.assertEqual(result.confidence, 4)
-        self.assertEqual(result.final_payload, {"final_answer": "4", "explanation": "direct", "confidence": 4})
+        self.assertEqual(
+            result.final_payload,
+            {"final_answer": "4", "sympy_answer": "4", "explanation": "direct", "confidence": 4},
+        )
         self.assertNotIn("verified_claims", result.final_payload)
         self.assertNotIn("sage_code", result.final_payload)
         self.assertEqual(result.tool_traces, [])
@@ -262,6 +288,98 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(logger.run_metadata["agent_mode"], "plain")
         self.assertEqual(logger.token_usage_totals["total_tokens"], 6)
 
+    def test_plain_mode_accepts_multi_sympy_answer(self) -> None:
+        model = _FakeModel(
+            structured_outputs=[
+                FinalAnswerArgs(
+                    final_answer="x \\in \\{-1, 1\\}",
+                    sympy_answer=["-1", "1"],
+                    explanation="Solve x^2 = 1 and check both roots.",
+                    confidence=4,
+                )
+            ]
+        )
+        controller = AgentController(model=model, tools=[])
+
+        result = controller.solve("Solve x^2 = 1.")
+
+        self.assertEqual(result.final_answer, "x \\in \\{-1, 1\\}")
+        self.assertEqual(result.sympy_answer, ["-1", "1"])
+        self.assertEqual(result.final_payload["sympy_answer"], ["-1", "1"])
+
+    def test_plain_mode_retries_once_after_invalid_sympy_answer(self) -> None:
+        try:
+            FinalAnswerArgs.model_validate(
+                {
+                    "final_answer": "M_{n+1} - 2M_{n-1} + M_{n-3}",
+                    "sympy_answer": "M_{n-1}",
+                    "explanation": "direct",
+                    "confidence": 4,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            parsing_error = exc
+        else:
+            self.fail("Expected invalid sympy_answer to raise")
+
+        model = _FakeModel(
+            structured_outputs=[
+                {
+                    "raw": AIMessage(
+                        content='{"final_answer":"M_{n+1}-2M_{n-1}+M_{n-3}","sympy_answer":"M_{n-1}","explanation":"direct","confidence":4}',
+                        usage_metadata={"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+                    ),
+                    "parsed": None,
+                    "parsing_error": parsing_error,
+                },
+                FinalAnswerArgs(
+                    final_answer="M_{n+1} - 2M_{n-1} + M_{n-3}",
+                    sympy_answer="M_n_plus_1 - 2*M_n_minus_1 + M_n_minus_3",
+                    explanation="direct",
+                    confidence=4,
+                ),
+            ]
+        )
+        logger = _RecordingLogger()
+        controller = AgentController(model=model, tools=[], logger=logger)
+
+        result = controller.solve("Express the answer in terms of Motzkin numbers.")
+
+        self.assertEqual(result.sympy_answer, "M_n_plus_1 - 2*M_n_minus_1 + M_n_minus_3")
+        self.assertEqual(result.turn_count, 2)
+        self.assertEqual(result.token_usage, {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12})
+        self.assertEqual(len(model.structured_invocations), 2)
+        self.assertIn("M_n_minus_1", model.structured_invocations[1][-1].content)
+        self.assertIn("sympy_answer", model.structured_invocations[1][-1].content)
+
+    def test_plain_mode_fails_after_one_invalid_sympy_retry(self) -> None:
+        try:
+            FinalAnswerArgs.model_validate(
+                {
+                    "final_answer": "M_{n+1} - 2M_{n-1} + M_{n-3}",
+                    "sympy_answer": "M_{n-1}",
+                    "explanation": "direct",
+                    "confidence": 4,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            parsing_error = exc
+        else:
+            self.fail("Expected invalid sympy_answer to raise")
+
+        model = _FakeModel(
+            structured_outputs=[
+                {"parsed": None, "parsing_error": parsing_error},
+                {"parsed": None, "parsing_error": parsing_error},
+            ]
+        )
+        controller = AgentController(model=model, tools=[])
+
+        with self.assertRaisesRegex(ValueError, "Structured output parsing failed"):
+            controller.solve("Express the answer in terms of Motzkin numbers.")
+
+        self.assertEqual(len(model.structured_invocations), 2)
+
     def test_plain_mode_requires_include_raw_structured_output_support(self) -> None:
         with self.assertRaisesRegex(TypeError, "include_raw"):
             AgentController(model=_FakeModelWithoutRaw(), tools=[])
@@ -275,7 +393,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         }
                     ],
@@ -312,7 +430,7 @@ class AgentControllerTests(unittest.TestCase):
                         {"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 2 + 2"}, "id": "call_1"},
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         },
                     ],
@@ -323,7 +441,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_4",
                         }
                     ],
@@ -354,7 +472,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_1",
                         }
                     ],
@@ -365,7 +483,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_3",
                         }
                     ],
@@ -394,7 +512,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5},
                             "id": "call_2",
                         }
                     ],
@@ -404,7 +522,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_3",
                         }
                     ],
@@ -424,13 +542,13 @@ class AgentControllerTests(unittest.TestCase):
         model = _FakeModel(
             [
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
-                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "verified_claims": []}, "id": "call_2"}]),
+                AIMessage(content="", tool_calls=[{"name": FINAL_ANSWER_TOOL_NAME, "args": {"final_answer": "4", "sympy_answer": "4", "verified_claims": []}, "id": "call_2"}]),
                 AIMessage(
                     content="",
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_3",
                         }
                     ],
@@ -450,7 +568,7 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(model.invocations[2][-1].status, "error")
         self.assertIn("Invalid submit_final_answer arguments", model.invocations[2][-1].content)
 
-    def test_rejects_finalization_until_verification_passes_when_configured(self) -> None:
+    def test_rejects_finalization_with_latex_sympy_answer(self) -> None:
         model = _FakeModel(
             [
                 AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
@@ -459,7 +577,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "$4$", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         }
                     ],
@@ -469,7 +587,77 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "id": "call_3",
+                        }
+                    ],
+                ),
+            ]
+        )
+        controller = AgentController(model=model, tools=[_make_sage_tool()], config=ControllerConfig(max_steps=3))
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.sympy_answer, "4")
+        self.assertEqual(model.invocations[2][-1].status, "error")
+        self.assertIn("Invalid submit_final_answer arguments", model.invocations[2][-1].content)
+
+    def test_rejects_finalization_with_non_parseable_sympy_answer(self) -> None:
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": FINAL_ANSWER_TOOL_NAME,
+                            "args": {"final_answer": "4", "sympy_answer": "x =", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "id": "call_2",
+                        }
+                    ],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": FINAL_ANSWER_TOOL_NAME,
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "id": "call_3",
+                        }
+                    ],
+                ),
+            ]
+        )
+        controller = AgentController(model=model, tools=[_make_sage_tool()], config=ControllerConfig(max_steps=3))
+
+        result = controller.solve("Q")
+
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(result.sympy_answer, "4")
+        self.assertEqual(model.invocations[2][-1].status, "error")
+        self.assertIn("Invalid submit_final_answer arguments", model.invocations[2][-1].content)
+
+    def test_rejects_finalization_until_verification_passes_when_configured(self) -> None:
+        model = _FakeModel(
+            [
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": FINAL_ANSWER_TOOL_NAME,
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "id": "call_2",
+                        }
+                    ],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": FINAL_ANSWER_TOOL_NAME,
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_3",
                         }
                     ],
@@ -498,7 +686,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_3",
                         }
                     ],
@@ -529,7 +717,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_1",
                         }
                     ],
@@ -541,6 +729,7 @@ class AgentControllerTests(unittest.TestCase):
                             "name": FINAL_ANSWER_TOOL_NAME,
                             "args": {
                                 "final_answer": "Best unverified answer: 4",
+                                "sympy_answer": "4",
                                 "explanation": "verified",
                                 "confidence": 2,
                                 "verified_claims": [],
@@ -593,7 +782,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         }
                     ],
@@ -625,7 +814,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         }
                     ],
@@ -679,6 +868,7 @@ class AgentControllerTests(unittest.TestCase):
             structured_outputs=[
                 FinalAnswerArgs(
                     final_answer="4",
+                    sympy_answer="4",
                     explanation="direct",
                     confidence=4,
                 )
@@ -702,7 +892,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         }
                     ],
@@ -729,7 +919,7 @@ class AgentControllerTests(unittest.TestCase):
                     tool_calls=[
                         {
                             "name": FINAL_ANSWER_TOOL_NAME,
-                            "args": {"final_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
                             "id": "call_2",
                         }
                     ],

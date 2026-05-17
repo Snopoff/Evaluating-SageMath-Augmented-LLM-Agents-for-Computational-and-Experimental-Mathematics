@@ -102,8 +102,10 @@ def answer_has_explicit_failure_language(answer: str) -> bool:
 def structured_final_request() -> str:
     return (
         f"Use the {FINAL_ANSWER_TOOL_NAME} tool to submit the final answer. "
-        "Provide final_answer, explanation, confidence as an integer from 1 to 5, "
-        "and verified_claims supported by successful Sage output or explicit reasoning."
+        "Provide final_answer, sympy_answer, explanation, confidence as an integer from 1 to 5, "
+        "and verified_claims supported by successful Sage output or explicit reasoning. "
+        "Make sympy_answer parseable by SymPy with explicit `*` and `**`, with no LaTeX wrappers or prose. "
+        "Flatten indexed names into ASCII identifiers like `M_n_minus_1`, not `M_{n-1}`."
     )
 
 
@@ -116,7 +118,20 @@ def forced_finalization_message(last_successful_sage_trace: Mapping[str, Any] | 
     return (
         "The step limit has been reached. Do not call sage_exec again. "
         f"{evidence_note} Call `submit_final_answer` now with the best final answer you can justify. "
-        "Put the exact checkable result in final_answer, the context in explanation, an integer confidence from 1 to 5, "
-        "and verified_claims supported by the available evidence. "
+        "Put the exact checkable result in final_answer, the normalized SymPy form in sympy_answer, "
+        "the context in explanation, an integer confidence from 1 to 5, and verified_claims supported by the available evidence. "
+        "sympy_answer must be parseable by SymPy with explicit `*` and `**`, with no LaTeX wrappers or prose. "
+        "Flatten indexed names into ASCII identifiers like `M_n_minus_1`, not `M_{n-1}`. "
         "If the evidence is incomplete, state what is verified and what remains unverified in explanation."
+    )
+
+
+def structured_sympy_retry_message(error_text: str) -> str:
+    return (
+        "Your previous structured response was rejected because sympy_answer was invalid. "
+        f"Validation error: {preview_text(error_text, max_chars=360)} "
+        "Regenerate the full structured answer once more and keep the same mathematical answer unless it needs correction. "
+        "Fix sympy_answer so every string is plain SymPy syntax parseable by "
+        "`sympy.parsing.sympy_parser.parse_expr(..., evaluate=False)`: no LaTeX, no backslashes, no `^`, and use explicit `*` and `**`. "
+        "Flatten indexed names into ASCII identifiers like `M_n_minus_1`, not `M_{n-1}`."
     )

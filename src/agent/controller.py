@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 
@@ -14,6 +15,7 @@ from src.agent.controller_utils import (
     message_payload,
     messages_for_logging,
     preview_text,
+    structured_sympy_retry_message,
     structured_final_request,
     trace_from_tool_message,
     trace_verification,
@@ -37,14 +39,13 @@ class SolveResult:
     tool_traces: list[dict[str, Any]]
     turn_count: int
     stop_reason: str
-    token_usage: dict[str, int] = field(
-        default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    )
+    token_usage: dict[str, int] = field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
     verified_sage_code: str = ""
     explanation: str = ""
     confidence: int = 0
     verified_claims: list[str] = field(default_factory=list)
     final_payload: dict[str, Any] = field(default_factory=dict)
+    sympy_answer: str | list[str] = ""
 
 
 class AgentController:
@@ -52,7 +53,7 @@ class AgentController:
 
     def __init__(
         self,
-        model: Any,
+        model: BaseChatModel,
         tools: Sequence[BaseTool],
         config: ControllerConfig | None = None,
         logger: ConsoleLogger | None = None,
@@ -91,11 +92,11 @@ class AgentController:
 
     def _solve_plain(self, messages: list[BaseMessage]) -> SolveResult:
         self._log("plain structured model call", level="turn", color="yellow")
-        payload = self._invoke_structured_model(messages, turn=1)
+        payload, turn_count = self._invoke_structured_model_with_retry(messages, turn=1)
         result = self._result_from_final_payload(
             payload=payload,
             tool_traces=[],
-            turn_count=1,
+            turn_count=turn_count,
             stop_reason="finalized",
             verified_sage_code="",
         )
@@ -237,9 +238,15 @@ class AgentController:
 
         result = SolveResult(
             final_answer="",
+            sympy_answer="",
             explanation="Forced finalization failed: the model did not call submit_final_answer with valid arguments.",
             confidence=1,
-            final_payload={"final_answer": "", "explanation": "Forced finalization failed.", "confidence": 1},
+            final_payload={
+                "final_answer": "",
+                "sympy_answer": "",
+                "explanation": "Forced finalization failed.",
+                "confidence": 1,
+            },
             token_usage=dict(self._current_token_usage),
             tool_traces=tool_traces,
             turn_count=turn,
@@ -255,20 +262,47 @@ class AgentController:
         raw_message = raw if isinstance(raw, AIMessage) else None
         parsing_error: Any = response.get("parsing_error")
         parsed: Any = response.get("parsed")
-        if parsing_error is not None:
-            raise ValueError(f"Structured output parsing failed: {parsing_error}") from parsing_error
 
         token_usage = self._record_token_usage(raw_message)
+        parsed_payload = parsed.model_dump() if hasattr(parsed, "model_dump") else (
+            {"parsing_error": str(parsing_error)} if parsing_error is not None else None
+        )
         self.logger.log_model_call(
             agent_id=self.agent_id,
             turn=turn,
             model_name=self.model_name,
             messages=messages_for_logging(messages),
             raw_response=json.dumps(message_payload(raw_message), ensure_ascii=True),
-            parsed_payload=parsed.model_dump(),
+            parsed_payload=parsed_payload,
             token_usage=token_usage,
         )
+        if parsing_error is not None:
+            raise ValueError(f"Structured output parsing failed: {parsing_error}") from parsing_error
         return parsed
+
+    def _invoke_structured_model_with_retry(self, messages: list[BaseMessage], *, turn: int) -> tuple[FinalAnswerArgs, int]:
+        current_messages = list(messages)
+        attempts_used = 0
+
+        while True:
+            attempts_used += 1
+            try:
+                return self._invoke_structured_model(current_messages, turn=turn + attempts_used - 1), attempts_used
+            except ValueError as exc:
+                if attempts_used >= 2 or not self._is_retryable_sympy_validation_error(exc):
+                    raise
+                self._log(
+                    "structured output rejected due to invalid sympy_answer; retrying once",
+                    level="retry",
+                    color="yellow",
+                )
+                correction_prompt = structured_sympy_retry_message(str(exc))
+                current_messages = [*current_messages, HumanMessage(content=correction_prompt)]
+
+    @staticmethod
+    def _is_retryable_sympy_validation_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "sympy_answer" in message
 
     def _invoke_and_log_tool_model(self, messages: list[BaseMessage], *, turn: int) -> AIMessage:
         response = self.model.invoke(messages)
@@ -367,6 +401,7 @@ class AgentController:
 
         return SolveResult(
             final_answer=payload.final_answer.strip(),
+            sympy_answer=(payload.sympy_answer.strip() if isinstance(payload.sympy_answer, str) else list(payload.sympy_answer)),
             explanation=payload.explanation.strip(),
             confidence=payload.confidence,
             final_payload=final_payload,

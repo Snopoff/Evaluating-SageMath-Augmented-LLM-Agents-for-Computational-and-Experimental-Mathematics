@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import hydra.utils as hu
 import rootutils
@@ -19,6 +20,8 @@ class _FakeController:
         self.logger = logger
         self.fail_attempts = fail_attempts
         self.solve_calls = 0
+        self.model_name = "configured-fake-model"
+        self.model = SimpleNamespace(model_name="fake-model")
 
     def solve(self, question: str) -> SolveResult:
         self.solve_calls += 1
@@ -26,8 +29,10 @@ class _FakeController:
         if self.solve_calls <= self.fail_attempts:
             raise TimeoutError("Request timed out.")
 
+        sympy_answer = f"result_{self.solve_calls}"
         return SolveResult(
             final_answer=f"answer for {question}",
+            sympy_answer=sympy_answer,
             explanation="direct answer",
             confidence=4,
             verified_claims=[],
@@ -35,7 +40,12 @@ class _FakeController:
             turn_count=1,
             stop_reason="finalized",
             token_usage={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
-            final_payload={"final_answer": f"answer for {question}", "explanation": "direct answer", "confidence": 4},
+            final_payload={
+                "final_answer": f"answer for {question}",
+                "sympy_answer": sympy_answer,
+                "explanation": "direct answer",
+                "confidence": 4,
+            },
         )
 
 
@@ -60,6 +70,7 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
                             "id": "problem-1",
                             "question": "What is 2+2?",
                             "answer": "4",
+                            "sympy_answer": "4",
                         }
                     ]
                 ),
@@ -81,18 +92,22 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             summary = runner.run()
 
             self.assertEqual(summary["rows"], 1)
+            self.assertEqual(summary["model"], "configured-fake-model")
             prediction_path = Path(summary["predictions_file"])
             summary_path = Path(summary["summary_file"])
             self.assertTrue(prediction_path.exists())
             self.assertTrue(summary_path.exists())
-            self.assertRegex(prediction_path.name, r"^predictions_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}\.jsonl$")
-            self.assertRegex(summary_path.name, r"^summary_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}\.json$")
+            self.assertRegex(prediction_path.name, r"^predictions_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{6}\.jsonl$")
+            self.assertRegex(summary_path.name, r"^summary_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{6}\.json$")
 
             row = json.loads(prediction_path.read_text(encoding="utf-8").strip())
             self.assertEqual(row["id"], "problem-1")
             self.assertEqual(row["question"], "What is 2+2?")
             self.assertEqual(row["ground_truth"], "4")
+            self.assertEqual(row["ground_truth_sympy_answer"], "4")
             self.assertEqual(row["model_final_answer"], "answer for What is 2+2?")
+            self.assertEqual(row["sympy_answer"], "result_1")
+            self.assertEqual(row["model_sympy_answer"], "result_1")
             self.assertEqual(row["explanation"], "direct answer")
             self.assertEqual(row["confidence"], 4)
             self.assertEqual(row["verified_claims"], [])
@@ -103,6 +118,32 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             self.assertIsInstance(row["solve_time_sec"], float)
             self.assertGreaterEqual(row["solve_time_sec"], 0.0)
 
+    def test_summary_prefers_controller_model_name_over_wrapped_runnable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            dataset_path = tmp_path / "data.json"
+            dataset_path.write_text(
+                json.dumps([{"id": "problem-1", "question": "What is 2+2?", "answer": "4"}]),
+                encoding="utf-8",
+            )
+
+            logger = ConsoleLogger(mode="generate_predictions")
+            controller = _FakeController(logger)
+            controller.model = SimpleNamespace()
+            runner = GeneratePredictionsRunner(
+                controller=controller,
+                config=GeneratePredictionsConfig(
+                    dataset_path=dataset_path,
+                    output_dir=tmp_path,
+                    limit=1,
+                ),
+                logger=logger,
+            )
+
+            summary = runner.run()
+
+            self.assertEqual(summary["model"], "configured-fake-model")
+
     def test_separate_logger_runs_preserve_per_row_token_usage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -110,8 +151,8 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             dataset_path.write_text(
                 json.dumps(
                     [
-                        {"id": "problem-1", "question": "What is 2+2?", "answer": "4"},
-                        {"id": "problem-2", "question": "What is 3+3?", "answer": "6"},
+                        {"id": "problem-1", "question": "What is 2+2?", "answer": "4", "sympy_answer": "4"},
+                        {"id": "problem-2", "question": "What is 3+3?", "answer": "6", "sympy_answer": "6"},
                     ]
                 ),
                 encoding="utf-8",
@@ -188,8 +229,8 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             dataset_path.write_text(
                 json.dumps(
                     [
-                        {"id": "problem-1", "question": "What is 2+2?", "answer": "4"},
-                        {"id": "problem-2", "question": "What is 3+3?", "answer": "6"},
+                        {"id": "problem-1", "question": "What is 2+2?", "answer": "4", "sympy_answer": "4"},
+                        {"id": "problem-2", "question": "What is 3+3?", "answer": "6", "sympy_answer": "6"},
                     ]
                 ),
                 encoding="utf-8",
@@ -224,8 +265,14 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
             ]
             self.assertEqual(len(rows), 2)
             self.assertEqual(rows[0]["stop_reason"], "problem_failed")
+            self.assertEqual(rows[0]["ground_truth_sympy_answer"], "4")
+            self.assertEqual(rows[0]["sympy_answer"], "")
+            self.assertEqual(rows[0]["model_sympy_answer"], "")
             self.assertEqual(rows[0]["error"]["type"], "TimeoutError")
             self.assertEqual(rows[1]["stop_reason"], "problem_failed")
+            self.assertEqual(rows[1]["ground_truth_sympy_answer"], "6")
+            self.assertEqual(rows[1]["sympy_answer"], "")
+            self.assertEqual(rows[1]["model_sympy_answer"], "")
 
     def test_runner_is_hydra_instantiable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -239,6 +286,7 @@ class GeneratePredictionsRunnerTests(unittest.TestCase):
                                 "id": "problem-1",
                                 "question": "What is 2+2?",
                                 "answer": "4",
+                                "sympy_answer": "4",
                             }
                         ]
                     }

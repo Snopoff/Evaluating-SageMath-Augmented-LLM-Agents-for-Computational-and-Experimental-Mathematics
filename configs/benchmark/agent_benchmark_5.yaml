@@ -7,8 +7,8 @@ config:
   progress_logs: true
   question_field: question
   answer_field: answer
+  sympy_answer_field: sympy_answer
   id_field: id
   predictions_file: predictions.jsonl
   tool_traces_file: tool_traces.jsonl
   metrics_file: metrics.json
-  symbolic_timeout_sec: 8

@@ -1,8 +1,10 @@
 import json
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from src.agent.controller import AgentController
@@ -26,6 +28,7 @@ class GeneratePredictionsConfig:
     fsync_each_row: bool = False
     question_field: str = "question"
     ground_truth_field: str = "answer"
+    ground_truth_sympy_field: str = "sympy_answer"
     id_field: str = "id"
 
     def __post_init__(self) -> None:
@@ -36,7 +39,7 @@ class GeneratePredictionsConfig:
 class GeneratePredictionsRunner:
     """Runs the agent on a dataset without scoring answers."""
 
-    FILE_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M"
+    FILE_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M-%S-%f"
 
     def __init__(
         self,
@@ -52,11 +55,9 @@ class GeneratePredictionsRunner:
         rows = self._load_rows(self.config.dataset_path, self.config.limit)
         self._progress(f"loaded rows={len(rows)}")
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = time.strftime(self.FILE_TIMESTAMP_FORMAT)
-        predictions_path = self.config.output_dir / f"predictions_{timestamp}.json"
-        summary_path = self.config.output_dir / f"summary_{timestamp}.json"
+        predictions_path, summary_path = self._allocate_output_paths()
         summary = {
-            "model": self.controller.model.model_name,
+            "model": self._resolve_model_name(),
             "rows": len(rows),
             "completed_rows": 0,
             "successful_rows": 0,
@@ -67,7 +68,7 @@ class GeneratePredictionsRunner:
         }
         self._write_summary(summary_path, summary)
 
-        with predictions_path.open("w", encoding="utf-8") as handle:
+        with predictions_path.open("x", encoding="utf-8") as handle:
             for index, row in enumerate(rows):
                 problem_id = row.get(self.config.id_field)
                 if not isinstance(problem_id, str):
@@ -75,6 +76,7 @@ class GeneratePredictionsRunner:
 
                 question = str(row.get(self.config.question_field, ""))
                 ground_truth = str(row.get(self.config.ground_truth_field, ""))
+                ground_truth_sympy_answer = row.get(self.config.ground_truth_sympy_field, "")
 
                 try:
                     solve_result, solve_time_sec = self._solve_problem(
@@ -85,7 +87,10 @@ class GeneratePredictionsRunner:
                         "id": problem_id,
                         "question": question,
                         "ground_truth": ground_truth,
+                        "ground_truth_sympy_answer": ground_truth_sympy_answer,
                         "model_final_answer": solve_result.final_answer,
+                        "sympy_answer": solve_result.sympy_answer,
+                        "model_sympy_answer": solve_result.sympy_answer,
                         "explanation": solve_result.explanation,
                         "confidence": solve_result.confidence,
                         "verified_claims": solve_result.verified_claims,
@@ -104,12 +109,13 @@ class GeneratePredictionsRunner:
                         problem_id=problem_id,
                         question=question,
                         ground_truth=ground_truth,
+                        ground_truth_sympy_answer=ground_truth_sympy_answer,
                         error=exc,
                     )
                     summary["failed_rows"] = int(summary.get("failed_rows", 0)) + 1
                     self._progress(f"problem_id={problem_id} failed after retries: {exc.__class__.__name__}: {exc}")
 
-                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
                 handle.flush()
                 if self.config.fsync_each_row:
                     os.fsync(handle.fileno())
@@ -140,6 +146,24 @@ class GeneratePredictionsRunner:
             )
 
         return summary
+
+    def _allocate_output_paths(self) -> tuple[Path, Path]:
+        for _ in range(1000):
+            timestamp = datetime.now().strftime(self.FILE_TIMESTAMP_FORMAT)
+            predictions_path = self.config.output_dir / f"predictions_{timestamp}.jsonl"
+            summary_path = self.config.output_dir / f"summary_{timestamp}.json"
+            if not predictions_path.exists() and not summary_path.exists():
+                return predictions_path, summary_path
+            time.sleep(0.001)
+        raise RuntimeError("Unable to allocate unique prediction output paths.")
+
+    def _resolve_model_name(self) -> str:
+        model_name = getattr(self.controller, "model_name", "")
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name
+        wrapped_model = getattr(self.controller, "model", None)
+        fallback = getattr(wrapped_model, "model_name", "")
+        return fallback if isinstance(fallback, str) else ""
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
@@ -220,13 +244,17 @@ class GeneratePredictionsRunner:
         problem_id: str,
         question: str,
         ground_truth: str,
+        ground_truth_sympy_answer: str | list[str],
         error: Exception,
     ) -> dict[str, Any]:
         return {
             "id": problem_id,
             "question": question,
             "ground_truth": ground_truth,
+            "ground_truth_sympy_answer": ground_truth_sympy_answer,
             "model_final_answer": "",
+            "sympy_answer": "",
+            "model_sympy_answer": "",
             "explanation": "",
             "confidence": 0,
             "verified_claims": [],
@@ -264,8 +292,13 @@ class GeneratePredictionsRunner:
 
     @staticmethod
     def _write_summary(path: Path, summary: dict[str, Any]) -> None:
-        with path.open("w", encoding="utf-8") as handle:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
             json.dump(summary, handle, indent=2, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        temp_path.replace(path)
 
     @staticmethod
     def _load_rows(path: Path, limit: int) -> list[dict[str, Any]]:
