@@ -5,7 +5,7 @@ config:
   #data/processed/normalized_problems_by_difficulty_hard.json
   #data/processed/normalized_problems.json #data/raw/realmathbenchmark_full_cas_assessment_cas_yes.json #data/processed/realmathbenchmark_full.json
   output_dir: outputs/generate_predictions
-  limit: 27
+  limit: 60
   progress_logs: true
   separate_logger_runs: false
   sleep_sec_between_problems: 2.0

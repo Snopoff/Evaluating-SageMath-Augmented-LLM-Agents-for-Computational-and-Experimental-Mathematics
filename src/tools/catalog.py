@@ -6,8 +6,6 @@ from pydantic import BaseModel
 from src.agent.schemas import SageExecArgs, SageFinalAnswerArgs
 from src.agent.verification import normalize_verification_payload
 from src.sage.runtime import SageRuntime
-
-
 SAGE_EXEC_TOOL_NAME = "sage_exec"
 FINAL_ANSWER_TOOL_NAME = "submit_final_answer"
 
@@ -82,6 +80,6 @@ def make_submit_final_answer_tool(args_schema: type[BaseModel] = SageFinalAnswer
     return _submit_final_answer
 
 
-AVAILABLE_TOOLS: dict[str, Callable[[SageRuntime, str], BaseTool]] = {
+AVAILABLE_TOOLS: dict[str, Callable[..., BaseTool]] = {
     SAGE_EXEC_TOOL_NAME: make_sage_exec_tool,
 }

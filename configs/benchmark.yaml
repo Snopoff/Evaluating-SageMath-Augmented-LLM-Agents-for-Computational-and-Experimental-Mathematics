@@ -2,6 +2,7 @@ defaults:
   - model: yandex
   - controller: default
   - sage: default
+  - context7: default
   - logger: wandb
   - benchmark: agent_benchmark_5
   - system_prompt: v3

@@ -10,7 +10,8 @@ from omegaconf import DictConfig
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.tools.catalog import AVAILABLE_TOOLS  # noqa: E402
+from src.tools.catalog import AVAILABLE_TOOLS, SAGE_EXEC_TOOL_NAME  # noqa: E402
+from src.tools.context7 import CONTEXT7_TOOL_NAMES, load_context7_tools  # noqa: E402
 from src.utils.config_helpers import resolve_prompt, resolve_text_asset  # noqa: E402
 
 
@@ -39,7 +40,12 @@ def main(cfg: DictConfig) -> None:
         raise ValueError("Config 'tools' must be a list of tool names.")
     tool_names = list(tool_names)
 
-    runtime = hu.instantiate(cfg.sage, logger=logger) if tool_names or mode == "benchmark" else None
+    sage_runtime = hu.instantiate(cfg.sage, logger=logger) if SAGE_EXEC_TOOL_NAME in tool_names or mode == "benchmark" else None
+    context7_tool_names = [name for name in tool_names if name in CONTEXT7_TOOL_NAMES]
+    context7_client = hu.instantiate(cfg.context7) if context7_tool_names else None
+    context7_tool_by_name = {}
+    if context7_client is not None:
+        context7_tool_by_name = load_context7_tools(context7_client)
 
     sage_usage_notes = ""
     if "sage_exec" in tool_names and cfg.get("sage_skill") is not None:
@@ -50,17 +56,28 @@ def main(cfg: DictConfig) -> None:
         system_prompt = resolve_text_asset(cfg.system_prompt, label="system_prompt", logger=logger)
 
     tools = []
-    available_names = sorted(AVAILABLE_TOOLS)
+    available_names = sorted(set(AVAILABLE_TOOLS) | CONTEXT7_TOOL_NAMES)
     for tool_name in tool_names:
+        if tool_name in CONTEXT7_TOOL_NAMES:
+            selected_tool = context7_tool_by_name.get(tool_name)
+            if selected_tool is None:
+                available_context7 = ", ".join(sorted(context7_tool_by_name)) or "(none)"
+                raise ValueError(f"Context7 tool {tool_name!r} was not loaded. Loaded tools: {available_context7}")
+            tools.append(selected_tool)
+            continue
+
         factory = AVAILABLE_TOOLS.get(tool_name)
         if factory is None:
             available_text = ", ".join(available_names) if available_names else "(none)"
             raise ValueError(f"Unknown tool: {tool_name!r}. Available tools: {available_text}")
 
-        if runtime is None:
-            raise RuntimeError(f"Tool runtime was not initialized for tool {tool_name!r}.")
-        usage_notes = sage_usage_notes if tool_name == "sage_exec" else ""
-        tools.append(factory(runtime, usage_notes))
+        if tool_name == SAGE_EXEC_TOOL_NAME:
+            if sage_runtime is None:
+                raise RuntimeError(f"Tool runtime was not initialized for tool {tool_name!r}.")
+            tools.append(factory(sage_runtime, sage_usage_notes))
+            continue
+
+        raise ValueError(f"Tool wiring is missing for {tool_name!r}.")
 
     if progress_logs:
         initialized_tools = ", ".join(tool.name for tool in tools) if tools else "(none)"
@@ -106,7 +123,7 @@ def main(cfg: DictConfig) -> None:
         runner = hu.instantiate(
             cfg.benchmark,
             controller=controller,
-            sage_runtime=runtime,
+            sage_runtime=sage_runtime,
             logger=logger,
         )
         try:

@@ -9,7 +9,12 @@ from pydantic import ValidationError
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
 
-from src.tools.catalog import FINAL_ANSWER_TOOL_NAME, SAGE_EXEC_TOOL_NAME, make_sage_exec_tool, make_submit_final_answer_tool  # noqa: E402
+from src.tools.catalog import (  # noqa: E402
+    FINAL_ANSWER_TOOL_NAME,
+    SAGE_EXEC_TOOL_NAME,
+    make_sage_exec_tool,
+    make_submit_final_answer_tool,
+)
 
 
 class SageExecToolFactoryTests(unittest.TestCase):

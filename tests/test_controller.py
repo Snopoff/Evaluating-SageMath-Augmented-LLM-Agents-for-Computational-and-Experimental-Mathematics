@@ -3,7 +3,7 @@ from typing import Any, Sequence
 
 import rootutils
 from langchain_core.messages import AIMessage
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, StructuredTool, tool
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
@@ -14,6 +14,7 @@ from src.agent.controller import (  # noqa: E402
     SolveResult,
 )
 from src.agent.schemas import FinalAnswerArgs  # noqa: E402
+from src.agent.schemas import SageExecArgs  # noqa: E402
 from src.tools.catalog import FINAL_ANSWER_TOOL_NAME, SAGE_EXEC_TOOL_NAME  # noqa: E402
 from src.utils.console_logging import ConsoleLogger  # noqa: E402
 
@@ -128,6 +129,26 @@ def _make_non_sage_tool() -> BaseTool:
         return query
 
     return context7
+
+
+def _make_async_sage_tool(calls: list[dict[str, Any]] | None = None) -> BaseTool:
+    async def sage_exec(code: str, result_var: str = "RESULT") -> tuple[str, dict[str, Any]]:
+        if calls is not None:
+            calls.append({"code": code, "result_var": result_var})
+        return "4", {
+            "ok": True,
+            "status": "ok",
+            "verification": _verification_payload(),
+            "code": code,
+        }
+
+    return StructuredTool(
+        name=SAGE_EXEC_TOOL_NAME,
+        description="Execute Sage.",
+        args_schema=SageExecArgs,
+        coroutine=sage_exec,
+        response_format="content_and_artifact",
+    )
 
 
 class AgentControllerTests(unittest.TestCase):
@@ -415,6 +436,36 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(len(model.invocations), 2)
         self.assertEqual(len(model.structured_invocations), 0)
         self.assertEqual(logger.run_metadata["agent_mode"], "react")
+
+    def test_async_only_tool_executes_via_ainvoke_fallback(self) -> None:
+        calls: list[dict[str, Any]] = []
+        model = _FakeModel(
+            outputs=[
+                AIMessage(content="", tool_calls=[{"name": SAGE_EXEC_TOOL_NAME, "args": {"code": "RESULT = 4"}, "id": "call_1"}]),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": FINAL_ANSWER_TOOL_NAME,
+                            "args": {"final_answer": "4", "sympy_answer": "4", "explanation": "verified", "confidence": 5, "verified_claims": []},
+                            "id": "call_2",
+                        }
+                    ],
+                ),
+            ]
+        )
+        controller = AgentController(
+            model=model,
+            tools=[_make_async_sage_tool(calls)],
+            config=ControllerConfig(max_steps=3),
+        )
+
+        result = controller.solve("What is 2+2?")
+
+        self.assertEqual(result.final_answer, "4")
+        self.assertEqual(calls, [{"code": "RESULT = 4", "result_var": "RESULT"}])
+        self.assertEqual(len(result.tool_traces), 1)
+        self.assertEqual(result.tool_traces[0]["ok"], True)
 
     def test_non_empty_tool_list_requires_sage_exec(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires the sage_exec tool"):

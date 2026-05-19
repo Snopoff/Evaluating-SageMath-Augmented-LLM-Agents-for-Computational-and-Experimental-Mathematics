@@ -2,6 +2,7 @@ defaults:
   - model: anthropic #yandex
   - controller: default
   - sage: default
+  - context7: default
   - logger: wandb
   - prompt: join_chromatic_pattern #frontiermath_degree19 #transformer
   - system_prompt: v3

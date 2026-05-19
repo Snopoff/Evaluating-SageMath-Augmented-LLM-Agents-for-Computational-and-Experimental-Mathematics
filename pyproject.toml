@@ -21,6 +21,7 @@ dependencies = [
     "rootutils>=1.0.7",
     "python-dotenv>=1.0.0",
     "sympy>=1.14.0",
+    "langchain-mcp-adapters",
 ]
 
 [dependency-groups]

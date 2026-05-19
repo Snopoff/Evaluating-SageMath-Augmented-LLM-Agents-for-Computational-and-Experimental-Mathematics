@@ -2,9 +2,10 @@ defaults:
   - model: yandex #anthropic #openai #yandex
   - controller: default
   - sage: default
+  - context7: default
   - logger: console
   - generate_predictions: default
-  - system_prompt: v4 #no-tool #v4
+  - system_prompt: v5 #no-tool #v4 #v5
   - sage_skill: v2
   - _self_
 
@@ -14,3 +15,4 @@ progress_logs: true
 
 tools:
   - sage_exec
+  - query-docs

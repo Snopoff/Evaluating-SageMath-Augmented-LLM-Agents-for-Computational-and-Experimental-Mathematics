@@ -12,7 +12,7 @@ The main path is intentionally small:
 - `src/sage/`
 - `src/benchmark/`
 
-No MCP server layer in the main run path and no large policy framework.
+No heavy orchestration layer in the main run path and no large policy framework.
 
 ## Quickstart
 
@@ -47,6 +47,13 @@ Optional: pre-pull the image once before running. If the image is missing locall
 docker pull "$SAGEMATH_IMAGE"
 ```
 
+Optional: configure Context7 MCP if you want the agent to retrieve current library docs through LangChain's official MCP adapter.
+
+```bash
+export CONTEXT7_API_KEY=...
+export CONTEXT7_MCP_URL='https://mcp.context7.com/mcp'
+```
+
 ## Run
 
 In `configs/chat.yaml` select the proper model, prompt and other parameters, and run
@@ -71,5 +78,11 @@ uv run --env-file .env python main.py --config-name benchmark system_prompt=no-t
 
 The same `AgentController` is used for plain and Sage-backed runs. With `tools: []`,
 it makes one structured model call. With `tools: [sage_exec]`, it runs the Sage
-ReAct loop and finalizes with the Sage
-structured schema.
+ReAct loop and finalizes with the Sage structured schema.
+
+To enable Context7 alongside Sage, include the official Context7 MCP tools you want:
+
+```bash
+uv run --env-file .env python main.py --config-name chat model=openai "tools=[sage_exec,query-docs]"
+uv run --env-file .env python main.py --config-name chat model=openai "tools=[sage_exec,resolve-library-id,query-docs]"
+```

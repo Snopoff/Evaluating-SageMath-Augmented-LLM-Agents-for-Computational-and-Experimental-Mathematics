@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
@@ -332,6 +333,27 @@ class AgentController:
             )
         try:
             return selected_tool.invoke({"type": "tool_call", "id": tool_call_id, "name": tool_name, "args": tool_args})
+        except NotImplementedError as exc:
+            if "does not support sync invocation" not in str(exc):
+                return ToolMessage(
+                    content=f"Tool error: {exc}",
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    artifact={"ok": False, "status": "tool_error", "error": str(exc)},
+                    status="error",
+                )
+            try:
+                return asyncio.run(
+                    selected_tool.ainvoke({"type": "tool_call", "id": tool_call_id, "name": tool_name, "args": tool_args})
+                )
+            except Exception as async_exc:  # noqa: BLE001
+                return ToolMessage(
+                    content=f"Tool error: {async_exc}",
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    artifact={"ok": False, "status": "tool_error", "error": str(async_exc)},
+                    status="error",
+                )
         except Exception as exc:  # noqa: BLE001 - tool errors should be returned to the model
             return ToolMessage(
                 content=f"Tool error: {exc}",
