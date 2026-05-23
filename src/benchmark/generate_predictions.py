@@ -18,6 +18,7 @@ class GeneratePredictionsConfig:
     dataset_path: Path
     output_dir: Path
     limit: int = 25
+    start_with: int = 0
     progress_logs: bool = False
     separate_logger_runs: bool = True
     sleep_sec_between_problems: float = 2.0
@@ -34,6 +35,8 @@ class GeneratePredictionsConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset_path", Path(self.dataset_path))
         object.__setattr__(self, "output_dir", Path(self.output_dir))
+        if self.start_with < 0:
+            raise ValueError("start_with must be >= 0")
 
 
 class GeneratePredictionsRunner:
@@ -52,7 +55,11 @@ class GeneratePredictionsRunner:
         self.logger = logger
 
     def run(self) -> dict[str, Any]:
-        rows = self._load_rows(self.config.dataset_path, self.config.limit)
+        rows = self._load_rows(
+            self.config.dataset_path,
+            self.config.limit,
+            self.config.start_with,
+        )
         self._progress(f"loaded rows={len(rows)}")
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         predictions_path, summary_path = self._allocate_output_paths()
@@ -130,6 +137,7 @@ class GeneratePredictionsRunner:
             artifact_metadata = {
                 "dataset_path": str(self.config.dataset_path),
                 "limit": self.config.limit,
+                "start_with": self.config.start_with,
                 "rows": len(rows),
             }
             self.logger.log_artifact(
@@ -301,7 +309,7 @@ class GeneratePredictionsRunner:
         temp_path.replace(path)
 
     @staticmethod
-    def _load_rows(path: Path, limit: int) -> list[dict[str, Any]]:
+    def _load_rows(path: Path, limit: int, start_with: int) -> list[dict[str, Any]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, dict) and isinstance(payload.get("problems"), list):
             rows = [row for row in payload["problems"] if isinstance(row, dict)]
@@ -312,6 +320,8 @@ class GeneratePredictionsRunner:
         else:
             rows = []
 
+        if start_with:
+            rows = rows[start_with:]
         if limit == -1:
             return rows
         return rows[:limit]
