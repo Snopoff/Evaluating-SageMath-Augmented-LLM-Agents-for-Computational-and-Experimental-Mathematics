@@ -1,18 +1,18 @@
 defaults:
-  - model: yandex #anthropic #openai #yandex
+  - model: openai #anthropic #google #yandex #anthropic #openai
   - controller: default
   - sage: default
   - context7: default
   - logger: console
   - generate_predictions: default
-  - system_prompt: v5 #no-tool #v4 #v5
+  - system_prompt: no-tool #v7 #no-tool #v4 #v5
   - sage_skill: v2
   - _self_
 
-model_name: deepseek-v32/latest #claude-opus-4-7 #gpt-5.5 #deepseek-v32/latest
+model_name: gpt-5.5 #gemini-3.5-flash #deepseek-v32/latest #claude-opus-4-7 #gpt-5.5
 mode: generate_predictions
 progress_logs: true
 
-tools:
-  - sage_exec
-  - query-docs
+tools: []
+  #- sage_exec
+  #- query-docs

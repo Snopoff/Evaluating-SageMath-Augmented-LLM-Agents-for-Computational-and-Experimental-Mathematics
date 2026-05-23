@@ -76,10 +76,21 @@ class AgentController:
         self.tools = [*runtime_tools, make_submit_final_answer_tool(SageFinalAnswerArgs)] if self.uses_react else []
         self.tool_by_name = {tool.name: tool for tool in self.tools}
         self.model = (
-            model.bind_tools(self.tools, parallel_tool_calls=False)
+            self._bind_tool_model(model)
             if self.uses_react
             else model.with_structured_output(FinalAnswerArgs, include_raw=True)
         )
+
+    def _bind_tool_model(self, model: BaseChatModel) -> Any:
+        bind_kwargs: dict[str, Any] = {}
+        if self._supports_parallel_tool_calls_bind_kwarg(model):
+            bind_kwargs["parallel_tool_calls"] = False
+        return model.bind_tools(self.tools, **bind_kwargs)
+
+    @staticmethod
+    def _supports_parallel_tool_calls_bind_kwarg(model: BaseChatModel) -> bool:
+        module_name = type(model).__module__
+        return not (module_name == "langchain_google_genai" or module_name.startswith("langchain_google_genai."))
 
     def solve(self, question: str) -> SolveResult:
         messages: list[BaseMessage] = [SystemMessage(content=self.system_prompt)] if self.system_prompt else []

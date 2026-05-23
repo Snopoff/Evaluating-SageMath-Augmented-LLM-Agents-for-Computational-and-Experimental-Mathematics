@@ -41,6 +41,7 @@ def make_sage_exec_tool(runtime: SageRuntime, usage_notes: str = "") -> BaseTool
             "ok": result.status == "ok",
             "status": result.status,
             "error_kind": getattr(result, "error_kind", ""),
+            "exit_code": getattr(result, "exit_code", None),
             "runtime_ms": result.runtime_ms,
             "stderr": result.stderr,
             "result_latex": result.result_latex,

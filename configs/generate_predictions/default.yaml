@@ -1,11 +1,13 @@
 _target_: src.benchmark.generate_predictions.GeneratePredictionsRunner
 config:
   _target_: src.benchmark.generate_predictions.GeneratePredictionsConfig
-  dataset_path: data/processed/normalized_problems_by_difficulty_medium.json
+  dataset_path: data/processed/normalized_problems_by_difficulty_hard.json
+  #data/processed/normalized_problems_by_difficulty_medium.json
   #data/processed/normalized_problems_by_difficulty_hard.json
   #data/processed/normalized_problems.json #data/raw/realmathbenchmark_full_cas_assessment_cas_yes.json #data/processed/realmathbenchmark_full.json
   output_dir: outputs/generate_predictions
-  limit: 60
+  limit: -1
+  start_with: 0
   progress_logs: true
   separate_logger_runs: false
   sleep_sec_between_problems: 2.0

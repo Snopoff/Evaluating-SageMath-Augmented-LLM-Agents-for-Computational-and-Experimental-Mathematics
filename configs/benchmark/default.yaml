@@ -4,6 +4,7 @@ config:
   dataset_path: data/processed/realmathbenchmark_qa.jsonl
   output_dir: .
   limit: 25
+  start_with: 0
   progress_logs: true
   question_field: question
   answer_field: answer

@@ -19,6 +19,7 @@ class BenchmarkConfig:
         dataset_path: Input dataset path containing benchmark rows.
         output_dir: Directory where predictions, traces, and metrics are written.
         limit: Maximum number of dataset rows to process.
+        start_with: Number of dataset rows to skip before processing.
         progress_logs: Whether benchmark progress messages are enabled.
         question_field: Input field name containing the benchmark prompt.
         answer_field: Input field name containing the human-readable reference answer.
@@ -32,6 +33,7 @@ class BenchmarkConfig:
     dataset_path: Path
     output_dir: Path
     limit: int = 25
+    start_with: int = 0
     progress_logs: bool = False
     question_field: str = "question"
     answer_field: str = "answer"
@@ -44,6 +46,8 @@ class BenchmarkConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset_path", Path(self.dataset_path))
         object.__setattr__(self, "output_dir", Path(self.output_dir))
+        if self.start_with < 0:
+            raise ValueError("start_with must be >= 0")
 
 
 class BenchmarkRunner:
@@ -69,7 +73,13 @@ class BenchmarkRunner:
         self._sympy_comparator = SympyAnswerComparator()
 
     def run(self) -> dict[str, Any]:
-        rows = list(self._iter_rows(self.config.dataset_path, self.config.limit))
+        rows = list(
+            self._iter_rows(
+                self.config.dataset_path,
+                self.config.limit,
+                self.config.start_with,
+            )
+        )
         self._progress(f"loaded rows={len(rows)}")
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -181,6 +191,7 @@ class BenchmarkRunner:
         artifact_metadata = {
             "dataset_path": str(self.config.dataset_path),
             "limit": self.config.limit,
+            "start_with": self.config.start_with,
             "rows": metrics.get("rows", 0),
             "accuracy": metrics.get("accuracy", 0.0),
         }
@@ -204,12 +215,13 @@ class BenchmarkRunner:
             print(f"[progress][benchmark] {message}", flush=True)
 
     @staticmethod
-    def _iter_rows(path: Path, limit: int) -> Iterable[dict[str, Any]]:
+    def _iter_rows(path: Path, limit: int, start_with: int) -> Iterable[dict[str, Any]]:
         if path.suffix == ".json":
-            yield from BenchmarkRunner._iter_json_rows(path, limit)
+            yield from BenchmarkRunner._iter_json_rows(path, limit, start_with)
             return
 
         with path.open("r", encoding="utf-8") as handle:
+            skipped = 0
             rows_seen = 0
             for line in handle:
                 line = line.strip()
@@ -217,13 +229,16 @@ class BenchmarkRunner:
                     continue
                 payload = json.loads(line)
                 if isinstance(payload, dict):
+                    if skipped < start_with:
+                        skipped += 1
+                        continue
                     yield payload
                     rows_seen += 1
-                    if rows_seen >= limit:
+                    if limit != -1 and rows_seen >= limit:
                         break
 
     @staticmethod
-    def _iter_json_rows(path: Path, limit: int) -> Iterable[dict[str, Any]]:
+    def _iter_json_rows(path: Path, limit: int, start_with: int) -> Iterable[dict[str, Any]]:
         text = path.read_text(encoding="utf-8")
         rows: Iterable[Any]
         try:
@@ -239,12 +254,16 @@ class BenchmarkRunner:
         except json.JSONDecodeError:
             rows = BenchmarkRunner._iter_json_stream(text)
 
+        skipped = 0
         rows_seen = 0
         for row in rows:
             if isinstance(row, dict):
+                if skipped < start_with:
+                    skipped += 1
+                    continue
                 yield row
                 rows_seen += 1
-                if rows_seen >= limit:
+                if limit != -1 and rows_seen >= limit:
                     break
 
     @staticmethod
