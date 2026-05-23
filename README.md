@@ -22,6 +22,13 @@ No heavy orchestration layer in the main run path and no large policy framework.
 uv sync
 ```
 
+To use the LangChain-native DeepSeek integration against DeepSeek's hosted API,
+install the optional extra:
+
+```bash
+uv sync --extra deepseek
+```
+
 2. Install Docker and make sure the Docker daemon is running.
 
 The Sage runtime executes via `docker run`, so Docker is a required local dependency.
@@ -74,6 +81,7 @@ LLM variants, override only the tool list and, optionally, the system prompt:
 ```bash
 uv run --env-file .env python main.py --config-name chat model=openai model_name=gpt-5.5 system_prompt=no-tool 'tools=[]'
 uv run --env-file .env python main.py --config-name benchmark system_prompt=no-tool 'tools=[]' benchmark.config.output_dir=outputs/agent_benchmark_5_plain
+uv run --env-file .env python main.py --config-name chat model=deepseek model_name=deepseek-chat system_prompt=no-tool 'tools=[]'
 ```
 
 The same `AgentController` is used for plain and Sage-backed runs. With `tools: []`,

@@ -1,7 +1,0 @@
-defaults:
-  - base
-  - _self_
-
-_target_: langchain_qwq.ChatQwen
-model: ${model_name}
-api_key: ${oc.env:QWEN_API_KEY}

@@ -9,7 +9,7 @@ dependencies = [
     "hydra-core>=1.3.2",
     #* LangChain
     "langchain-anthropic>=1.2.0",
-    "langchain-core>=1.3.1",
+    "langchain-core>=1.3.3,<1.4.0",
     "langchain-google-genai>=4.1.0",
     "langchain-ollama>=1.1.0",
     "langchain-openai>=1.2.0",
@@ -35,6 +35,6 @@ mlx = [
 ]
 
 analysis = ["pandas>=3.0.2", "seaborn>=0.13.2"]
-qwen = [
-    "langchain-qwq>=0.3.5",
+deepseek = [
+    "langchain-deepseek>=1.0.1",
 ]

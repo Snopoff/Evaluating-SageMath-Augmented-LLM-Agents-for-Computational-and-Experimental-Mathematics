@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+_target_: langchain_deepseek.ChatDeepSeek
+model: ${model_name}
+api_key: ${oc.env:DEEPSEEK_API_KEY}
