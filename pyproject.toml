@@ -35,3 +35,6 @@ mlx = [
 ]
 
 analysis = ["pandas>=3.0.2", "seaborn>=0.13.2"]
+qwen = [
+    "langchain-qwq>=0.3.5",
+]
