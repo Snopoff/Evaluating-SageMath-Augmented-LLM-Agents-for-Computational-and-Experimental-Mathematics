@@ -29,6 +29,12 @@ install the optional extra:
 uv sync --extra deepseek
 ```
 
+To use the LangChain-native xAI integration for Grok models, install:
+
+```bash
+uv sync --extra grok
+```
+
 2. Install Docker and make sure the Docker daemon is running.
 
 The Sage runtime executes via `docker run`, so Docker is a required local dependency.
@@ -80,8 +86,9 @@ LLM variants, override only the tool list and, optionally, the system prompt:
 
 ```bash
 uv run --env-file .env python main.py --config-name chat model=openai model_name=gpt-5.5 system_prompt=no-tool 'tools=[]'
-uv run --env-file .env python main.py --config-name benchmark system_prompt=no-tool 'tools=[]' benchmark.config.output_dir=outputs/agent_benchmark_5_plain
+uv run --env-file .env python benchmark.py benchmark.config.predictions_path=data/results/deepseek/tool/sage_deepseekv32_medium_number_0_60.json
 uv run --env-file .env python main.py --config-name chat model=deepseek model_name=deepseek-chat system_prompt=no-tool 'tools=[]'
+uv run --env-file .env python main.py --config-name chat model=grok model_name=grok-4 system_prompt=no-tool 'tools=[]'
 ```
 
 The same `AgentController` is used for plain and Sage-backed runs. With `tools: []`,

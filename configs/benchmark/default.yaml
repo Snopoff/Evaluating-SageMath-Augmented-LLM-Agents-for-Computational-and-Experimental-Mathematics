@@ -1,15 +1,11 @@
-_target_: src.benchmark.runner.BenchmarkRunner
+_target_: src.benchmark.benchmark.Benchmark
 config:
-  _target_: src.benchmark.runner.BenchmarkConfig
-  dataset_path: data/processed/realmathbenchmark_qa.jsonl
-  output_dir: .
-  limit: 25
-  start_with: 0
+  _target_: src.benchmark.components.config.BenchmarkConfig
+  predictions_path: data/results/deepseek/tool/sage_deepseekv32_medium_number_0_60.json
+  tags_path: data/results/arxiv_tags_by_problem.json
+  answer_types_path: data/processed/normalized_problems.json
   progress_logs: true
-  question_field: question
-  answer_field: answer
-  sympy_answer_field: sympy_answer
-  id_field: id
-  predictions_file: predictions.jsonl
-  tool_traces_file: tool_traces.jsonl
-  metrics_file: metrics.json
+  judge_specs:
+    - openai=gpt-5.5
+    - anthropic=claude-opus-4-7
+    - google=gemini-3.5-flash

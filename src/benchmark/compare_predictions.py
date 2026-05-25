@@ -9,6 +9,9 @@ from typing import Any, Iterable, Sequence
 from src.benchmark.sympy_compare import ScoreResult, SympyAnswerComparator
 
 
+ANSWER_TYPES = ("number", "expression", "formula")
+
+
 @dataclass(frozen=True)
 class ComparePredictionsConfig:
     input_path: Path
@@ -50,6 +53,7 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
     symbolic_correct = 0
     missing_prediction = 0
     missing_reference = 0
+    missing_answer_type = 0
     timed_out_rows = 0
     results: list[dict[str, Any]] = []
 
@@ -59,6 +63,7 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
             problem_id = f"row-{index + 1:05d}"
 
         question = str(row.get(config.question_field, ""))
+        answer_type = _answer_type_from_row(row) or _answer_type_from_input_path(config.input_path)
         prediction_value, prediction_field = _resolve_first_present(row, config.prediction_sympy_fields)
         reference_value, reference_field = _resolve_first_present(row, config.reference_sympy_fields)
 
@@ -76,6 +81,8 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
             missing_prediction += 1
         if _is_missing_sympy_answer(reference_sympy):
             missing_reference += 1
+        if not answer_type:
+            missing_answer_type += 1
         if timed_out:
             timed_out_rows += 1
         if score.correct:
@@ -91,6 +98,7 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
             {
                 "id": problem_id,
                 "question": question,
+                "answer_type": answer_type,
                 "prediction_sympy_answer": prediction_sympy,
                 "reference_sympy_answer": reference_sympy,
                 "prediction_sympy_field": prediction_field,
@@ -116,6 +124,7 @@ def compare_predictions(config: ComparePredictionsConfig) -> dict[str, Any]:
         "symbolic_correct": symbolic_correct,
         "missing_prediction_rows": missing_prediction,
         "missing_reference_rows": missing_reference,
+        "missing_answer_type_rows": missing_answer_type,
         "timed_out_rows": timed_out_rows,
         "malformed_rows_skipped": malformed_rows_skipped,
         "input_path": str(config.input_path),
@@ -258,6 +267,28 @@ def _resolve_first_present(row: dict[str, Any], field_names: Sequence[str]) -> t
         if field_name in row:
             return row[field_name], field_name
     return "", ""
+
+
+def _answer_type_from_row(row: dict[str, Any]) -> str:
+    answer_type = row.get("answer_type")
+    if answer_type in ANSWER_TYPES:
+        return str(answer_type)
+
+    llm_payload = row.get("llm")
+    if isinstance(llm_payload, dict):
+        answer_type = llm_payload.get("answer_type")
+        if answer_type in ANSWER_TYPES:
+            return str(answer_type)
+
+    return ""
+
+
+def _answer_type_from_input_path(input_path: Path) -> str:
+    stem = input_path.stem.lower()
+    for answer_type in ANSWER_TYPES:
+        if stem.endswith(f"_{answer_type}") or f"_{answer_type}_" in stem:
+            return answer_type
+    return ""
 
 
 def _is_missing_sympy_answer(value: str | list[str]) -> bool:

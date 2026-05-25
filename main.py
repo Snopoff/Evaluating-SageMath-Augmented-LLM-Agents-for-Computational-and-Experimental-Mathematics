@@ -28,6 +28,11 @@ def _save_verified_sage_code(code: str) -> Path:
 def main(cfg: DictConfig) -> None:
     mode = str(cfg.get("mode", "chat"))
     progress_logs = bool(cfg.get("progress_logs", True))
+    if mode == "benchmark":
+        runner = hu.instantiate(cfg.benchmark)
+        runner.run()
+        return
+
     logger = hu.instantiate(cfg.logger, mode=mode)
     logger.setup_logging()
     if progress_logs:
@@ -40,7 +45,7 @@ def main(cfg: DictConfig) -> None:
         raise ValueError("Config 'tools' must be a list of tool names.")
     tool_names = list(tool_names)
 
-    sage_runtime = hu.instantiate(cfg.sage, logger=logger) if SAGE_EXEC_TOOL_NAME in tool_names or mode == "benchmark" else None
+    sage_runtime = hu.instantiate(cfg.sage, logger=logger) if SAGE_EXEC_TOOL_NAME in tool_names else None
     context7_tool_names = [name for name in tool_names if name in CONTEXT7_TOOL_NAMES]
     context7_client = hu.instantiate(cfg.context7) if context7_tool_names else None
     context7_tool_by_name = {}
@@ -113,23 +118,6 @@ def main(cfg: DictConfig) -> None:
                 print(f"Verified Sage code saved to: {artifact_path}")
                 print(result.verified_sage_code)
             logger.finish_run(status=result.stop_reason)
-            return
-        except Exception:
-            logger.finish_run(status="failed")
-            raise
-
-    if mode == "benchmark":
-        cfg.benchmark.config.dataset_path = hu.to_absolute_path(str(cfg.benchmark.config.dataset_path))
-        runner = hu.instantiate(
-            cfg.benchmark,
-            controller=controller,
-            sage_runtime=sage_runtime,
-            logger=logger,
-        )
-        try:
-            metrics = runner.run()
-            print(json.dumps(metrics, indent=2, ensure_ascii=False))
-            logger.finish_run(status="completed")
             return
         except Exception:
             logger.finish_run(status="failed")

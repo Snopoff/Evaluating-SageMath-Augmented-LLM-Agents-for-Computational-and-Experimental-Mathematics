@@ -1,16 +1,10 @@
 defaults:
-  - model: yandex
-  - controller: default
-  - sage: default
-  - context7: default
-  - logger: wandb
-  - benchmark: agent_benchmark_5
-  - system_prompt: v3
-  - sage_skill: v2
+  - benchmark: default
   - _self_
 
-model_name: deepseek-v32/latest
 mode: benchmark
 progress_logs: true
-tools:
-  - sage_exec
+
+benchmark:
+  config:
+    predictions_path: data/results/grok/tool/full.json

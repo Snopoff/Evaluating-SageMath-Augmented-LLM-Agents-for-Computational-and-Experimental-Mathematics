@@ -1,5 +1,5 @@
 defaults:
-  - model: anthropic #yandex
+  - model: anthropic #openai #google #deepseek #grok #yandex #ollama #mlx
   - controller: default
   - sage: default
   - context7: default
@@ -11,7 +11,7 @@ defaults:
 
 controller.max_steps: 1
 
-model_name: claude-opus-4-7 #deepseek-v32/latest #gpt-5.5-2026-04-23 #gpt-oss-20b/latest #qwen3:4b-thinking-2507-q4_K_M
+model_name: claude-opus-4-7 #gpt-5.5-2026-04-23 #deepseek-chat #grok-4 #deepseek-v32/latest
 mode: chat
 progress_logs: true
 

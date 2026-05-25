@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+_target_: langchain_xai.ChatXAI
+model: ${model_name}
+api_key: ${oc.env:XAI_API_KEY}

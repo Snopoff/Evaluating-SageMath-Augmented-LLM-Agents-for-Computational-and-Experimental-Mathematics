@@ -23,6 +23,7 @@ from src.agent.controller_utils import (
 )
 from src.tools.catalog import FINAL_ANSWER_TOOL_NAME, SAGE_EXEC_TOOL_NAME, make_submit_final_answer_tool
 from src.utils.console_logging import ConsoleLogger
+from src.utils.langchain_structured_output import structured_output_kwargs
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ class AgentController:
         self.model = (
             self._bind_tool_model(model)
             if self.uses_react
-            else model.with_structured_output(FinalAnswerArgs, include_raw=True)
+            else model.with_structured_output(FinalAnswerArgs, **structured_output_kwargs(model))
         )
 
     def _bind_tool_model(self, model: BaseChatModel) -> Any:

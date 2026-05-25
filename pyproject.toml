@@ -3,7 +3,7 @@ name = "Sagent"
 version = "0.2.0"
 description = "Minimalistic AI agent framework for your mathematical research."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     #* Hydra
     "hydra-core>=1.3.2",
@@ -25,7 +25,12 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ipykernel>=7.2.0"]
+dev = ["ipykernel>=7.2.0", "pytest>=9.0.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
 
 [project.optional-dependencies]
 mlx = [
@@ -35,6 +40,6 @@ mlx = [
 ]
 
 analysis = ["pandas>=3.0.2", "seaborn>=0.13.2"]
-deepseek = [
-    "langchain-deepseek>=1.0.1",
-]
+deepseek = ["langchain-deepseek>=1.0.1"]
+qwen = ["langchain-qwq>=0.3.4"]
+grok = ["langchain-xai>=1.2.2"]
