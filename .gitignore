@@ -17,6 +17,7 @@ outputs/
 artifacts/
 wandb/
 logs/
+multirun/
 
 # Data
 data/raw
