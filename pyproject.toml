@@ -1,7 +1,7 @@
 [project]
 name = "Sagent"
 version = "0.2.0"
-description = "Minimalistic AI agent framework for your mathematical research."
+description = "Evaluating SageMath-Augmented LLM Agents for Computational and Experimental Mathematics."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [

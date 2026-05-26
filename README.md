@@ -1,103 +1,156 @@
-# LLMxM2
+# Evaluating SageMath-Augmented LLM Agents for Computational and Experimental Mathematics
 
-Minimal LLM + Sage experimentation codebase.
+This repository contains the code for running LLM agents that solve mathematical
+problems with optional SageMath tool use. The implementation is intentionally
+small: Hydra configs select the model, prompt, logger, controller, and tools;
+`AgentController` drives the interaction loop; and Sage code is executed in a
+Docker-backed runtime.
 
-## Design
+## Repository Layout
 
-The main path is intentionally small:
+- `main.py`: Hydra entry point for chat, prediction generation, and benchmark modes.
+- `benchmark.py`: standalone Hydra entry point for benchmark evaluation.
+- `configs/`: model, controller, prompt, logger, Sage, Context7, and benchmark configs.
+- `src/agent/`: agent controller, schemas, and answer verification helpers.
+- `src/sage/`: Docker-backed Sage runtime.
+- `src/tools/`: LangChain tool wrappers for Sage and Context7.
+- `src/benchmark/`: prediction, comparison, judging, and benchmark utilities.
+- `prompts/`: reusable system prompts and Sage usage notes.
+- `tests/`: unit tests.
 
-- `main.py`
-- `src/agent/`
-- `src/tools/`
-- `src/sage/`
-- `src/benchmark/`
+## Installation
 
-No heavy orchestration layer in the main run path and no large policy framework.
-
-## Quickstart
-
-1. Install dependencies:
+Install the base dependencies with `uv`:
 
 ```bash
 uv sync
 ```
 
-To use the LangChain-native DeepSeek integration against DeepSeek's hosted API,
-install the optional extra:
+Optional provider integrations are installed as extras:
 
 ```bash
 uv sync --extra deepseek
-```
-
-To use the LangChain-native xAI integration for Grok models, install:
-
-```bash
 uv sync --extra grok
+uv sync --extra qwen
 ```
 
-2. Install Docker and make sure the Docker daemon is running.
-
-The Sage runtime executes via `docker run`, so Docker is a required local dependency.
-
-3. Set environment variables:
+For analysis-only dependencies, use:
 
 ```bash
-export OPENAI_API_KEY=...
+uv sync --extra analysis
+```
+
+## Environment
+
+Sage execution uses Docker, so Docker must be installed and running. Set a Sage
+image before using `sage_exec`:
+
+```bash
 export SAGEMATH_IMAGE='docker.io/sagemath/sagemath@sha256:<real_digest>'
 ```
 
-`SAGEMATH_IMAGE` must point to a real Sage image digest. The default config value is only a placeholder.
-
-Optional (Apple Silicon with amd64 image):
+If the image is built for `linux/amd64` and the host is Apple Silicon, also set:
 
 ```bash
 export SAGEMATH_PLATFORM='linux/amd64'
 ```
 
-Optional: pre-pull the image once before running. If the image is missing locally, `docker run` will usually pull it automatically.
+Set only the model-provider keys needed for the run:
 
 ```bash
-docker pull "$SAGEMATH_IMAGE"
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
+export GOOGLE_API_KEY=...
+export DEEPSEEK_API_KEY=...
+export XAI_API_KEY=...
+export QWEN_API_KEY=...
 ```
 
-Optional: configure Context7 MCP if you want the agent to retrieve current library docs through LangChain's official MCP adapter.
+Yandex-compatible runs additionally use:
+
+```bash
+export YANDEX_API_KEY=...
+export YANDEX_FOLDER_ID=...
+```
+
+The default chat config uses the W&B logger. Either configure W&B:
+
+```bash
+export WANDB_ENTITY=...
+export WANDB_PROJECT=...
+```
+
+or override the logger on the command line:
+
+```bash
+make chat HYDRA='logger=console'
+```
+
+Context7 documentation tools are optional:
 
 ```bash
 export CONTEXT7_API_KEY=...
 export CONTEXT7_MCP_URL='https://mcp.context7.com/mcp'
 ```
 
-## Run
+## Running
 
-In `configs/chat.yaml` select the proper model, prompt and other parameters, and run
-
-```Makefile
-make run
-```
-
-Equivalently, you can pass the arguments right in CLI
-
-```Makefile
-make run model=openai
-```
-
-Use the same base configs for both Sage-backed and plain runs. For the plain structured
-LLM variants, override only the tool list and, optionally, the system prompt:
+Run the default chat configuration:
 
 ```bash
-uv run --env-file .env python main.py --config-name chat model=openai model_name=gpt-5.5 system_prompt=no-tool 'tools=[]'
-uv run --env-file .env python benchmark.py benchmark.config.predictions_path=data/results/deepseek/tool/sage_deepseekv32_medium_number_0_60.json
-uv run --env-file .env python main.py --config-name chat model=deepseek model_name=deepseek-chat system_prompt=no-tool 'tools=[]'
-uv run --env-file .env python main.py --config-name chat model=grok model_name=grok-4 system_prompt=no-tool 'tools=[]'
+make chat
 ```
 
-The same `AgentController` is used for plain and Sage-backed runs. With `tools: []`,
-it makes one structured model call. With `tools: [sage_exec]`, it runs the Sage
-ReAct loop and finalizes with the Sage structured schema.
-
-To enable Context7 alongside Sage, include the official Context7 MCP tools you want:
+Override model/provider settings through Hydra:
 
 ```bash
-uv run --env-file .env python main.py --config-name chat model=openai "tools=[sage_exec,query-docs]"
-uv run --env-file .env python main.py --config-name chat model=openai "tools=[sage_exec,resolve-library-id,query-docs]"
+make chat HYDRA='model=openai model_name=gpt-5.5 logger=console'
+make chat HYDRA='model=deepseek model_name=deepseek-chat logger=console'
 ```
+
+Disable tools for a plain structured LLM run:
+
+```bash
+make chat-no-tool HYDRA='model=openai model_name=gpt-5.5 logger=console'
+```
+
+Enable Context7 together with Sage:
+
+```bash
+make chat HYDRA='model=openai model_name=gpt-5.5 logger=console "tools=[sage_exec,query-docs]"'
+make chat HYDRA='model=openai model_name=gpt-5.5 logger=console "tools=[sage_exec,resolve-library-id,query-docs]"'
+```
+
+Generate predictions with the `generate_predictions` config:
+
+```bash
+make generate-predictions
+make generate-predictions-no-tool HYDRA='model=openai model_name=gpt-5.5 logger=console'
+make generate-predictions-tool HYDRA='model=google model_name=gemini-3.1-pro-preview logger=console'
+```
+
+Run benchmark evaluation against an existing predictions file:
+
+```bash
+make benchmark HYDRA='benchmark.config.predictions_path=data/results/<path-to-predictions>.json'
+```
+
+Judge a SymPy comparison output file:
+
+```bash
+make judge-sympy input=data/results/<model>/<setup>/output/<file>.json
+```
+
+Run tests:
+
+```bash
+make test
+make test-analysis
+```
+
+## Notes
+
+- `tools=[sage_exec]` runs the Sage-backed ReAct loop.
+- `tools=[]` runs the same controller without Sage.
+- `tools=[sage_exec,query-docs]` adds Context7 documentation lookup.
+- Runtime artifacts, logs, W&B files, generated result files, and `.env` are ignored by default.
