@@ -17,6 +17,7 @@ from src.agent.controller_utils import (
     messages_for_logging,
     preview_text,
     structured_sympy_retry_message,
+    structured_output_retry_message,
     structured_final_request,
     trace_from_tool_message,
     trace_verification,
@@ -374,25 +375,33 @@ class AgentController:
     def _invoke_structured_model_with_retry(self, messages: list[BaseMessage], *, turn: int) -> tuple[FinalAnswerArgs, int]:
         current_messages = list(messages)
         attempts_used = 0
+        max_retries = max(0, self.config.num_finalization_retries)
 
         while True:
             attempts_used += 1
             try:
                 return self._invoke_structured_model(current_messages, turn=turn + attempts_used - 1), attempts_used
             except ValueError as exc:
-                if attempts_used >= 2 or not self._is_retryable_sympy_validation_error(exc):
+                if attempts_used > max_retries:
                     raise
+                retry_number = attempts_used
                 self._log(
-                    "structured output rejected due to invalid sympy_answer; retrying once",
+                    f"structured output rejected; retrying ({retry_number}/{max_retries})",
                     level="retry",
                     color="yellow",
                 )
-                correction_prompt = structured_sympy_retry_message(str(exc))
+                correction_prompt = (
+                    structured_sympy_retry_message(str(exc))
+                    if self._is_retryable_sympy_validation_error(exc)
+                    else structured_output_retry_message(str(exc))
+                )
                 current_messages = [*current_messages, HumanMessage(content=correction_prompt)]
 
     @staticmethod
     def _is_retryable_sympy_validation_error(exc: Exception) -> bool:
         message = str(exc).lower()
+        if "invalid json output" in message or "output_parsing_failure" in message:
+            return False
         return "sympy_answer" in message
 
     def _invoke_and_log_tool_model(self, messages: list[BaseMessage], *, turn: int) -> AIMessage:

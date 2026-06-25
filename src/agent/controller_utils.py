@@ -135,3 +135,14 @@ def structured_sympy_retry_message(error_text: str) -> str:
         "`sympy.parsing.sympy_parser.parse_expr(..., evaluate=False)`: no LaTeX, no backslashes, no `^`, and use explicit `*` and `**`. "
         "Flatten indexed names into ASCII identifiers like `M_n_minus_1`, not `M_{n-1}`."
     )
+
+
+def structured_output_retry_message(error_text: str) -> str:
+    return (
+        "Your previous structured response could not be parsed or validated. "
+        f"Error: {preview_text(error_text, max_chars=480)} "
+        "Return the final answer again using the required structured output schema. "
+        "Provide final_answer, sympy_answer, explanation, and confidence as an integer from 1 to 5. "
+        "Do not include prose outside the structured response. "
+        "Make sympy_answer parseable by SymPy, with no LaTeX wrappers or prose."
+    )
