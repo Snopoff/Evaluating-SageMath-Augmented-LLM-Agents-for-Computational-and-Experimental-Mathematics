@@ -4,3 +4,4 @@ config:
   max_steps: 15
   progress_logs: true
   require_verification_for_final: false
+  num_finalization_retries: 5

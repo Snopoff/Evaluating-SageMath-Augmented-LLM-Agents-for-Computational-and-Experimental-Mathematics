@@ -33,6 +33,7 @@ class ControllerConfig:
     max_steps: int = 6
     progress_logs: bool = False
     require_verification_for_final: bool = False
+    num_finalization_retries: int = 5
 
 
 @dataclass(frozen=True)
@@ -218,8 +219,6 @@ class AgentController:
     ) -> SolveResult:
         self._log("step limit reached; requesting forced final answer")
         messages.append(HumanMessage(content=forced_finalization_message(last_successful_sage_trace)))
-        turn = self.config.max_steps + 1
-        ai_message = self._invoke_and_log_tool_model(messages, turn=turn)
 
         stop_reason = "forced_finalized"
         if last_successful_sage_trace is None:
@@ -229,35 +228,61 @@ class AgentController:
             if not verification_ok:
                 stop_reason = "forced_finalized_without_verification"
 
-        for tool_call in list(ai_message.tool_calls or []):
-            if str(tool_call.get("name", "")) != FINAL_ANSWER_TOOL_NAME:
-                continue
-            final_payload, rejection = self._read_final_answer(
-                dict(tool_call.get("args", {})),
+        max_retries = max(0, self.config.num_finalization_retries)
+        last_failure = "Forced finalization failed: the model did not call submit_final_answer with valid arguments."
+        turn = self.config.max_steps
+
+        for attempt_index in range(max_retries + 1):
+            turn = self.config.max_steps + 1 + attempt_index
+            ai_message = self._invoke_and_log_tool_model(messages, turn=turn)
+            tool_calls = list(ai_message.tool_calls or [])
+
+            for tool_call in tool_calls:
+                if str(tool_call.get("name", "")) != FINAL_ANSWER_TOOL_NAME:
+                    continue
+                final_payload, rejection = self._read_final_answer(
+                    dict(tool_call.get("args", {})),
+                    last_successful_sage_trace=last_successful_sage_trace,
+                    last_successful_verification_trace=last_successful_verification_trace,
+                    forced=True,
+                )
+                if rejection is None:
+                    result = self._result_from_final_payload(
+                        payload=final_payload,
+                        tool_traces=tool_traces,
+                        turn_count=turn,
+                        stop_reason=stop_reason,
+                        verified_sage_code=verified_sage_code,
+                    )
+                    self._log_solve_result(result)
+                    return result
+
+            messages.append(ai_message)
+            retry_messages, last_failure = self._forced_finalization_retry_messages(
+                ai_message=ai_message,
+                turn=turn,
                 last_successful_sage_trace=last_successful_sage_trace,
                 last_successful_verification_trace=last_successful_verification_trace,
-                forced=True,
             )
-            if rejection is None:
-                result = self._result_from_final_payload(
-                    payload=final_payload,
-                    tool_traces=tool_traces,
-                    turn_count=turn,
-                    stop_reason=stop_reason,
-                    verified_sage_code=verified_sage_code,
-                )
-                self._log_solve_result(result)
-                return result
+            if attempt_index >= max_retries:
+                break
+            self._log(
+                f"forced finalization rejected; retrying ({attempt_index + 1}/{max_retries})",
+                level="retry",
+                color="yellow",
+            )
+            messages.extend(retry_messages)
 
+        explanation = f"Forced finalization failed after {max_retries + 1} attempt(s): {last_failure}"
         result = SolveResult(
             final_answer="",
             sympy_answer="",
-            explanation="Forced finalization failed: the model did not call submit_final_answer with valid arguments.",
+            explanation=explanation,
             confidence=1,
             final_payload={
                 "final_answer": "",
                 "sympy_answer": "",
-                "explanation": "Forced finalization failed.",
+                "explanation": explanation,
                 "confidence": 1,
             },
             token_usage=dict(self._current_token_usage),
@@ -268,6 +293,59 @@ class AgentController:
         )
         self._log_solve_result(result)
         return result
+
+    def _forced_finalization_retry_messages(
+        self,
+        *,
+        ai_message: AIMessage,
+        turn: int,
+        last_successful_sage_trace: Mapping[str, Any] | None,
+        last_successful_verification_trace: Mapping[str, Any] | None,
+    ) -> tuple[list[BaseMessage], str]:
+        tool_calls = list(ai_message.tool_calls or [])
+        if not tool_calls:
+            failure = "Forced finalization failed: the model did not call submit_final_answer with valid arguments."
+            return [
+                HumanMessage(
+                    content=(
+                        f"{failure} Call submit_final_answer now with valid arguments. "
+                        "submit_final_answer is the final-answer tool; it requires final_answer, "
+                        "sympy_answer, explanation, confidence as an integer from 1 to 5, and verified_claims. "
+                        "Do not call sage_exec again."
+                    )
+                )
+            ], failure
+
+        retry_messages: list[BaseMessage] = []
+        failures: list[str] = []
+        for i, tool_call in enumerate(tool_calls, start=1):
+            tool_name = str(tool_call.get("name", ""))
+            tool_call_id = str(tool_call.get("id") or f"forced_finalization_{turn}_{i}")
+            if tool_name == FINAL_ANSWER_TOOL_NAME:
+                _, rejection = self._read_final_answer(
+                    dict(tool_call.get("args", {})),
+                    last_successful_sage_trace=last_successful_sage_trace,
+                    last_successful_verification_trace=last_successful_verification_trace,
+                    forced=True,
+                )
+                failure = rejection or "Rejected final answer. Call submit_final_answer with valid arguments."
+            else:
+                failure = (
+                    f"Rejected forced finalization tool call `{tool_name}`. "
+                    f"The step limit has been reached; call {FINAL_ANSWER_TOOL_NAME} with valid arguments instead."
+                )
+            failures.append(failure)
+            retry_messages.append(
+                ToolMessage(
+                    content=failure,
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    artifact={"ok": False, "status": "forced_finalization_rejected"},
+                    status="error",
+                )
+            )
+
+        return retry_messages, " ".join(failures)
 
     def _invoke_structured_model(self, messages: list[BaseMessage], *, turn: int) -> FinalAnswerArgs:
         response = self.model.invoke(messages)
