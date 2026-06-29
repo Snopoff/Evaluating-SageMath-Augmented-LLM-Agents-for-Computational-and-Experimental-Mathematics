@@ -187,7 +187,7 @@ def instantiate_model_from_config(provider: str, model_name: str, *, max_tokens:
 
     cfg = OmegaConf.create({"model_name": model_name, "model": model_cfg})
     OmegaConf.resolve(cfg)
-    model = hu.instantiate(cfg.model)
+    model = hu.instantiate(cfg.model, _convert_="all")
     if not isinstance(model, BaseChatModel):
         raise TypeError(f"Config {provider!r} produced {type(model).__name__}, expected a LangChain chat model.")
     return model

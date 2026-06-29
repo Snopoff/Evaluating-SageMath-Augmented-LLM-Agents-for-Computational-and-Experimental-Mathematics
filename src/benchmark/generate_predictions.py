@@ -287,6 +287,7 @@ class GeneratePredictionsRunner:
             "ReadTimeout",
             "ConnectTimeout",
             "RemoteProtocolError",
+            "JSONDecodeError",
         }
         current: BaseException | None = exc
         while current is not None:
