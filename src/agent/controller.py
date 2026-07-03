@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
@@ -14,7 +15,10 @@ from src.agent.controller_utils import (
     answer_has_explicit_failure_language,
     forced_finalization_message,
     message_payload,
+    message_text,
     messages_for_logging,
+    plain_json_forced_finalization_message,
+    plain_json_structured_output_message,
     preview_text,
     structured_sympy_retry_message,
     structured_output_retry_message,
@@ -70,6 +74,7 @@ class AgentController:
         self.agent_id = agent_id.strip() or "single_agent"
         self.model_name = model_name
         self.system_prompt = system_prompt.strip()
+        self._base_model = model
 
         runtime_tools = list(tools)
         self.uses_react = bool(runtime_tools)
@@ -274,6 +279,18 @@ class AgentController:
             )
             messages.extend(retry_messages)
 
+        fallback_result = self._try_plain_json_forced_finalization(
+            messages=messages,
+            tool_traces=tool_traces,
+            turn=turn + 1,
+            stop_reason=stop_reason,
+            last_failure=last_failure,
+            verified_sage_code=verified_sage_code,
+        )
+        if fallback_result is not None:
+            self._log_solve_result(fallback_result)
+            return fallback_result
+
         explanation = f"Forced finalization failed after {max_retries + 1} attempt(s): {last_failure}"
         result = SolveResult(
             final_answer="",
@@ -348,8 +365,70 @@ class AgentController:
 
         return retry_messages, " ".join(failures)
 
+    def _try_plain_json_forced_finalization(
+        self,
+        *,
+        messages: list[BaseMessage],
+        tool_traces: list[dict[str, Any]],
+        turn: int,
+        stop_reason: str,
+        last_failure: str,
+        verified_sage_code: str,
+    ) -> SolveResult | None:
+        fallback_messages = [
+            HumanMessage(
+                content=(
+                    f"{plain_json_forced_finalization_message(last_failure)}\n\n"
+                    "Conversation transcript:\n"
+                    f"{self._plain_text_transcript(messages)}"
+                )
+            )
+        ]
+        try:
+            response = self._base_model.invoke(fallback_messages)
+        except Exception as exc:  # noqa: BLE001 - fallback should not mask the original failure
+            self._log(f"plain JSON forced finalization fallback failed: {exc}", level="retry", color="yellow")
+            return None
+
+        token_usage = self._record_token_usage(response if isinstance(response, AIMessage) else None)
+        parsed_payload: dict[str, Any] | None = None
+        parse_error: Exception | None = None
+        try:
+            payload = self._parse_final_answer_from_text(message_text(response), schema=SageFinalAnswerArgs)
+            parsed_payload = payload.model_dump()
+        except Exception as exc:  # noqa: BLE001 - preserve the original forced-finalization failure
+            parse_error = exc
+            parsed_payload = {"parsing_error": str(exc)}
+            payload = None
+
+        self.logger.log_model_call(
+            agent_id=self.agent_id,
+            turn=turn,
+            model_name=self.model_name,
+            messages=messages_for_logging(fallback_messages),
+            raw_response=json.dumps(
+                message_payload(response if isinstance(response, AIMessage) else None),
+                ensure_ascii=True,
+            ),
+            parsed_payload=parsed_payload,
+            token_usage=token_usage,
+        )
+        if payload is None:
+            self._log(f"plain JSON forced finalization fallback rejected: {parse_error}", level="retry", color="yellow")
+            return None
+        return self._result_from_final_payload(
+            payload=payload,
+            tool_traces=tool_traces,
+            turn_count=turn,
+            stop_reason=stop_reason,
+            verified_sage_code=verified_sage_code,
+        )
+
     def _invoke_structured_model(self, messages: list[BaseMessage], *, turn: int) -> FinalAnswerArgs:
-        response = self.model.invoke(messages)
+        try:
+            response = self.model.invoke(messages)
+        except ValidationError as exc:
+            raise ValueError(f"Structured output parsing failed: {exc}") from exc
         raw = response.get("raw")
         raw_message = raw if isinstance(raw, AIMessage) else None
         parsing_error: Any = response.get("parsing_error")
@@ -368,8 +447,19 @@ class AgentController:
             parsed_payload=parsed_payload,
             token_usage=token_usage,
         )
+        if parsed is None:
+            fallback_payload = self._try_parse_final_answer_from_message(raw_message)
+            if fallback_payload is not None:
+                return fallback_payload
         if parsing_error is not None:
             raise ValueError(f"Structured output parsing failed: {parsing_error}") from parsing_error
+        if parsed is None:
+            raise ValueError("Structured output parsing failed: no parsed payload was returned.")
+        if isinstance(parsed, dict):
+            try:
+                return FinalAnswerArgs.model_validate(parsed)
+            except ValidationError as exc:
+                raise ValueError(f"Structured output parsing failed: {exc}") from exc
         return parsed
 
     def _invoke_structured_model_with_retry(self, messages: list[BaseMessage], *, turn: int) -> tuple[FinalAnswerArgs, int]:
@@ -383,6 +473,13 @@ class AgentController:
                 return self._invoke_structured_model(current_messages, turn=turn + attempts_used - 1), attempts_used
             except ValueError as exc:
                 if attempts_used > max_retries:
+                    if self._should_try_plain_json_fallback(exc):
+                        fallback_turn = turn + attempts_used
+                        return self._invoke_plain_json_structured_model(
+                            current_messages,
+                            turn=fallback_turn,
+                            error_text=str(exc),
+                        ), attempts_used + 1
                     raise
                 retry_number = attempts_used
                 self._log(
@@ -403,6 +500,139 @@ class AgentController:
         if "invalid json output" in message or "output_parsing_failure" in message:
             return False
         return "sympy_answer" in message
+
+    @staticmethod
+    def _should_try_plain_json_fallback(exc: Exception) -> bool:
+        message = str(exc).lower()
+        if "sympy_answer" in message and "invalid json" not in message:
+            return False
+        return any(
+            marker in message
+            for marker in (
+                "structured output parsing failed",
+                "does not have a 'parsed' field",
+                "no parsed payload",
+                "invalid json",
+                "invalid json output",
+                "output_parsing_failure",
+            )
+        )
+
+    def _invoke_plain_json_structured_model(
+        self,
+        messages: list[BaseMessage],
+        *,
+        turn: int,
+        error_text: str,
+    ) -> FinalAnswerArgs:
+        fallback_messages = [*messages, HumanMessage(content=plain_json_structured_output_message(error_text))]
+        response = self._base_model.invoke(fallback_messages)
+        token_usage = self._record_token_usage(response if isinstance(response, AIMessage) else None)
+        parsed_payload: dict[str, Any] | None = None
+        parse_error: Exception | None = None
+        try:
+            parsed = self._parse_final_answer_from_text(message_text(response))
+            parsed_payload = parsed.model_dump()
+        except Exception as exc:  # noqa: BLE001 - preserve the structured failure context
+            parse_error = exc
+            parsed_payload = {"parsing_error": str(exc)}
+            parsed = None
+
+        self.logger.log_model_call(
+            agent_id=self.agent_id,
+            turn=turn,
+            model_name=self.model_name,
+            messages=messages_for_logging(fallback_messages),
+            raw_response=json.dumps(
+                message_payload(response if isinstance(response, AIMessage) else None),
+                ensure_ascii=True,
+            ),
+            parsed_payload=parsed_payload,
+            token_usage=token_usage,
+        )
+        if parsed is None:
+            raise ValueError(f"Plain JSON fallback parsing failed: {parse_error}") from parse_error
+        return parsed
+
+    def _try_parse_final_answer_from_message(self, message: AIMessage | None) -> FinalAnswerArgs | None:
+        if message is None:
+            return None
+        try:
+            return self._parse_final_answer_from_text(message_text(message))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_final_answer_from_text(
+        text: str,
+        *,
+        schema: type[FinalAnswerArgs] = FinalAnswerArgs,
+    ) -> FinalAnswerArgs:
+        errors: list[str] = []
+        for candidate in AgentController._json_candidates(text):
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError as exc:
+                errors.append(f"JSONDecodeError: {exc}")
+                continue
+            if (
+                isinstance(payload, dict)
+                and issubclass(schema, SageFinalAnswerArgs)
+                and "verified_claims" not in payload
+            ):
+                payload = {**payload, "verified_claims": []}
+            try:
+                return schema.model_validate(payload)
+            except ValidationError as exc:
+                errors.append(f"ValidationError: {exc}")
+        details = "; ".join(errors[:3]) if errors else "no JSON object found"
+        raise ValueError(details)
+
+    @staticmethod
+    def _json_candidates(text: str) -> list[str]:
+        stripped = text.strip()
+        candidates: list[str] = []
+        if stripped:
+            candidates.append(stripped)
+        for match in re.finditer(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL):
+            fenced = match.group(1).strip()
+            if fenced:
+                candidates.append(fenced)
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(text[start : end + 1].strip())
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                deduped.append(candidate)
+                seen.add(candidate)
+        return deduped
+
+    @staticmethod
+    def _plain_text_transcript(messages: Sequence[BaseMessage]) -> str:
+        lines: list[str] = []
+        for index, message in enumerate(messages, start=1):
+            payload = message_payload(message)
+            role = str(payload.get("role", message.type))
+            header = f"[{index}] {role}"
+            if isinstance(message, ToolMessage):
+                header += f" name={message.name} status={message.status}"
+            lines.append(header)
+
+            content = message_text(message)
+            if content.strip():
+                lines.append(content.strip())
+
+            tool_calls = payload.get("tool_calls")
+            if tool_calls:
+                lines.append(f"tool_calls={json.dumps(tool_calls, ensure_ascii=True)}")
+
+            if isinstance(message, ToolMessage) and isinstance(message.artifact, Mapping):
+                lines.append(f"tool_artifact={json.dumps(dict(message.artifact), ensure_ascii=True, default=str)}")
+        return "\n\n".join(lines)
 
     def _invoke_and_log_tool_model(self, messages: list[BaseMessage], *, turn: int) -> AIMessage:
         response = self.model.invoke(messages)

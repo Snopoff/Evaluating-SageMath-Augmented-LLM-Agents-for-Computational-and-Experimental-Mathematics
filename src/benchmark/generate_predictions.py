@@ -294,10 +294,31 @@ class GeneratePredictionsRunner:
             if current.__class__.__name__ in retryable_class_names:
                 return True
             message = str(current).lower()
-            if any(marker in message for marker in ("timed out", "timeout", "rate limit", "too many requests", "429")):
+            if GeneratePredictionsRunner._is_retryable_structured_output_error(message):
+                return True
+            if any(
+                marker in message
+                for marker in ("timed out", "timeout", "rate limit", "too many requests", "429", "connection error")
+            ):
                 return True
             current = current.__cause__ or current.__context__
         return False
+
+    @staticmethod
+    def _is_retryable_structured_output_error(message: str) -> bool:
+        if "sympy_answer" in message and "invalid json" not in message:
+            return False
+        return any(
+            marker in message
+            for marker in (
+                "structured output parsing failed",
+                "plain json fallback parsing failed",
+                "does not have a 'parsed' field",
+                "no parsed payload",
+                "invalid json output",
+                "output_parsing_failure",
+            )
+        )
 
     @staticmethod
     def _write_summary(path: Path, summary: dict[str, Any]) -> None:

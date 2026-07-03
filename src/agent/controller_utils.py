@@ -146,3 +146,28 @@ def structured_output_retry_message(error_text: str) -> str:
         "Do not include prose outside the structured response. "
         "Make sympy_answer parseable by SymPy, with no LaTeX wrappers or prose."
     )
+
+
+def plain_json_structured_output_message(error_text: str) -> str:
+    return (
+        "The structured-output adapter failed repeatedly. "
+        f"Last error: {preview_text(error_text, max_chars=480)} "
+        "Answer by returning exactly one JSON object with these keys: "
+        "final_answer, sympy_answer, explanation, confidence. "
+        "Use a string or list of strings for sympy_answer. "
+        "Do not include Markdown, prose outside JSON, or code fences. "
+        "Make sympy_answer parseable by SymPy, with no LaTeX wrappers, backslashes, caret exponentiation, or prose."
+    )
+
+
+def plain_json_forced_finalization_message(error_text: str) -> str:
+    return (
+        "The tool-call finalization step failed repeatedly. "
+        f"Last error: {preview_text(error_text, max_chars=480)} "
+        "Do not call or describe tools. Return exactly one JSON object with these keys: "
+        "final_answer, sympy_answer, explanation, confidence, verified_claims. "
+        "Use a string or list of strings for sympy_answer, an integer from 1 to 5 for confidence, "
+        "and a list of short strings for verified_claims. "
+        "Do not include Markdown, prose outside JSON, or code fences. "
+        "Make sympy_answer parseable by SymPy, with no LaTeX wrappers, backslashes, caret exponentiation, or prose."
+    )
