@@ -11,7 +11,6 @@ wheels/
 .venv
 
 # Logs
-#logs/
 *.log
 outputs/
 artifacts/
@@ -20,14 +19,10 @@ logs/
 multirun/
 
 # Data
-data/raw
-data/processed/realmathbenchmark_full*
-data/results/
-data/processed/normalized_problems*
-error_problems.json
-problems_by_*
-medium_hard_number_expression.json
-agent_benchmark_5.json
+data/*
+*.png
+*.json*
+*.txt
 
 # MacOS
 .DS_Store

@@ -10,10 +10,10 @@ chat-no-tool:
 	uv run --env-file .env python main.py system_prompt=no-tool 'tools=[]' $(HYDRA)
 
 benchmark:
-	uv run --env-file .env python benchmark.py $(HYDRA)
+	time caffeinate -ims uv run --env-file .env python benchmark.py $(HYDRA)
 
 generate-predictions:
-	uv run --env-file .env python main.py --config-name generate_predictions $(HYDRA)
+	time caffeinate -ims uv run --env-file .env python main.py --config-name generate_predictions $(HYDRA)
 
 generate-predictions-tool:
 	uv run --env-file .env python main.py --config-name generate_predictions system_prompt=v4 'tools=[sage_exec]' $(HYDRA)

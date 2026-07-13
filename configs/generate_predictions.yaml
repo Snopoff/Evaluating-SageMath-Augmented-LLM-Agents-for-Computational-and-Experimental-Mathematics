@@ -1,18 +1,29 @@
 defaults:
-  - model: google
+  - model: anthropic
   - controller: default
   - sage: default
   - context7: default
   - logger: console
   - generate_predictions: default
-  - system_prompt: v7
+  - system_prompt: no-tool #v7
   - sage_skill: v2
   - _self_
 
-model_name: gemini-3.1-pro-preview
+model_name: claude-opus-4-8
 mode: generate_predictions
 progress_logs: true
 
-tools:
-  - sage_exec
-  - query-docs
+tools: []
+  #- sage_exec
+  #- query-docs
+
+generate_predictions:
+  config:
+    dataset_path: data/processed/problems_failed_opus-4-8_no_tool_api_funding.json
+    start_with: 0
+    limit: -1
+    #data/processed/problems_to_run.json
+
+controller:
+  config:
+    num_finalization_retries: 0

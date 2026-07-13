@@ -1,2 +1,2 @@
-max_tokens: 32000
+max_tokens: 65536
 max_retries: 3

@@ -38,7 +38,7 @@ def main(cfg: DictConfig) -> None:
     if progress_logs:
         logger.progress(f"starting main (mode={mode})")
 
-    model = hu.instantiate(cfg.model)
+    model = hu.instantiate(cfg.model, _convert_="all")
 
     tool_names = cfg.get("tools", [])
     if not isinstance(tool_names, Iterable) or not all(isinstance(name, str) for name in tool_names):

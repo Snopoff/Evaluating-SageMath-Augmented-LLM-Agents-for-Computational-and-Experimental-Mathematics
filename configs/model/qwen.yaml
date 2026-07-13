@@ -4,5 +4,5 @@ defaults:
 
 _target_: langchain_qwq.ChatQwen
 model: ${model_name}
-base_url: ${oc.env:QWEN_BASE_URL,https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+base_url: ${oc.env:QWEN_BASE_URL,https://dashscope-us.aliyuncs.com/compatible-mode/v1}
 api_key: ${oc.env:QWEN_API_KEY}

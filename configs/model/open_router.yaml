@@ -1,0 +1,8 @@
+defaults:
+  - base
+  - _self_
+
+_target_: langchain_openai.ChatOpenAI
+model: ${model_name}
+base_url: ${oc.env:OPENROUTER_BASE_URL}
+api_key: ${oc.env:OPENROUTER_API_KEY}
