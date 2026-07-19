@@ -1,18 +1,13 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sympy.parsing.sympy_parser import parse_expr
 
 
-def _validate_sympy_string(value: str, *, field_name: str) -> str:
+def _validate_answer_string(value: str, *, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field_name} strings must be non-empty.")
-    if any(marker in normalized for marker in ("$", "\\", "^")):
-        raise ValueError(f"{field_name} must not contain LaTeX wrappers, backslashes, or caret exponentiation.")
-    try:
-        parse_expr(normalized, evaluate=False)
-    except Exception as exc:  # noqa: BLE001 - surface parser failures as validation errors
-        raise ValueError(f"{field_name} must be parseable by sympy.parse_expr(..., evaluate=False): {exc}") from exc
-    return normalized
+    if any(marker in normalized for marker in ("$", "\\")):
+        raise ValueError(f"{field_name} must not contain LaTeX wrappers or backslashes.")
+    return value
 
 
 class SageExecArgs(BaseModel):
@@ -46,7 +41,7 @@ class FinalAnswerArgs(BaseModel):
         description=(
             "Normalized SymPy form of the final answer for benchmarking. "
             "Use a single string for one answer or list[str] for multiple answers. "
-            "No prose, no LaTeX wrappers, no backslashes, and no caret exponentiation. "
+            "No prose, no LaTeX wrappers, and no backslashes. "
             "Flatten indexed names into ASCII identifiers like M_n_minus_1, not M_{n-1}."
         ),
     )
@@ -61,11 +56,11 @@ class FinalAnswerArgs(BaseModel):
     @classmethod
     def validate_sympy_answer(cls, value: str | list[str]) -> str | list[str]:
         if isinstance(value, str):
-            return _validate_sympy_string(value, field_name="sympy_answer")
+            return _validate_answer_string(value, field_name="sympy_answer")
         if not value:
             raise ValueError("sympy_answer lists must be non-empty.")
         return [
-            _validate_sympy_string(item, field_name=f"sympy_answer[{index}]")
+            _validate_answer_string(item, field_name=f"sympy_answer[{index}]")
             for index, item in enumerate(value)
         ]
 

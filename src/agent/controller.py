@@ -54,6 +54,7 @@ class SolveResult:
     verified_claims: list[str] = field(default_factory=list)
     final_payload: dict[str, Any] = field(default_factory=dict)
     sympy_answer: str | list[str] = ""
+    model_sympy_answer_raw: str | list[str] | None = None
 
 
 class AgentController:
@@ -746,13 +747,24 @@ class AgentController:
     ) -> SolveResult:
         final_payload = payload.model_dump()
         verified_claims = list(getattr(payload, "verified_claims", []) or [])
+        model_sympy_answer_raw = (
+            payload.sympy_answer
+            if isinstance(payload.sympy_answer, str)
+            else list(payload.sympy_answer)
+        )
+        normalized_sympy_answer = (
+            payload.sympy_answer.strip()
+            if isinstance(payload.sympy_answer, str)
+            else [item.strip() for item in payload.sympy_answer]
+        )
         if self.uses_react:
             final_payload["verified_claims"] = verified_claims
             final_payload["sage_code"] = verified_sage_code
 
         return SolveResult(
             final_answer=payload.final_answer.strip(),
-            sympy_answer=(payload.sympy_answer.strip() if isinstance(payload.sympy_answer, str) else list(payload.sympy_answer)),
+            sympy_answer=normalized_sympy_answer,
+            model_sympy_answer_raw=model_sympy_answer_raw,
             explanation=payload.explanation.strip(),
             confidence=payload.confidence,
             final_payload=final_payload,

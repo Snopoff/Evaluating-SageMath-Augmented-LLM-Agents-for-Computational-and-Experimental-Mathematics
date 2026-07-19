@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+  - /system_prompt: tool
+  - /sage_skill: v2
+  - _self_
+
+model:
+  use_responses_api: true
+
+tools:
+  - sage_exec
+  - query-docs

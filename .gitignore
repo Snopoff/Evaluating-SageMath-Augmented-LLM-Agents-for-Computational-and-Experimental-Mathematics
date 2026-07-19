@@ -32,4 +32,4 @@ data/*
 
 # temp and draft files
 drafts/
-scripts/
+scripts/*

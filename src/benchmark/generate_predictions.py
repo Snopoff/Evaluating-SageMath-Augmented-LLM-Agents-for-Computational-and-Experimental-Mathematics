@@ -63,8 +63,10 @@ class GeneratePredictionsRunner:
         self._progress(f"loaded rows={len(rows)}")
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         predictions_path, summary_path = self._allocate_output_paths()
+        use_tools = self._uses_tools()
         summary = {
             "model": self._resolve_model_name(),
+            "use_tools": use_tools,
             "rows": len(rows),
             "completed_rows": 0,
             "successful_rows": 0,
@@ -90,6 +92,9 @@ class GeneratePredictionsRunner:
                         question=question,
                         problem_id=problem_id,
                     )
+                    model_sympy_answer_raw = solve_result.model_sympy_answer_raw
+                    if model_sympy_answer_raw is None:
+                        model_sympy_answer_raw = solve_result.sympy_answer
                     payload = {
                         "id": problem_id,
                         "question": question,
@@ -98,6 +103,7 @@ class GeneratePredictionsRunner:
                         "model_final_answer": solve_result.final_answer,
                         "sympy_answer": solve_result.sympy_answer,
                         "model_sympy_answer": solve_result.sympy_answer,
+                        "model_sympy_answer_raw": model_sympy_answer_raw,
                         "explanation": solve_result.explanation,
                         "confidence": solve_result.confidence,
                         "verified_claims": solve_result.verified_claims,
@@ -172,6 +178,13 @@ class GeneratePredictionsRunner:
         wrapped_model = getattr(self.controller, "model", None)
         fallback = getattr(wrapped_model, "model_name", "")
         return fallback if isinstance(fallback, str) else ""
+
+    def _uses_tools(self) -> bool:
+        uses_react = getattr(self.controller, "uses_react", None)
+        if isinstance(uses_react, bool):
+            return uses_react
+        tools = getattr(self.controller, "tools", [])
+        return bool(tools) if isinstance(tools, list) else False
 
     def _progress(self, message: str) -> None:
         if self.config.progress_logs:
@@ -263,6 +276,7 @@ class GeneratePredictionsRunner:
             "model_final_answer": "",
             "sympy_answer": "",
             "model_sympy_answer": "",
+            "model_sympy_answer_raw": "",
             "explanation": "",
             "confidence": 0,
             "verified_claims": [],

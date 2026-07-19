@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+  - /system_prompt: no-tool
+  - _self_
+
+model:
+  use_responses_api: false
+
+sage_skill: null
+
+tools: []
