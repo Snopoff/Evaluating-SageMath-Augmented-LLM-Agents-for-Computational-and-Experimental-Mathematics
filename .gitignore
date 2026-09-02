@@ -27,9 +27,28 @@ data/*
 # MacOS
 .DS_Store
 
-# Secrets
+# Environment
 .env
+.envrc
 
 # temp and draft files
 drafts/
 scripts/*
+!scripts/paper_revision_analysis.py
+reports/
+tmp/
+notes/
+
+# Tex
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+
+# Paper
+eacl/
+paper/
