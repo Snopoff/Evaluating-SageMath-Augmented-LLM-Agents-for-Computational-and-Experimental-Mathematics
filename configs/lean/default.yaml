@@ -1,0 +1,14 @@
+_target_: src.lean.runtime.LeanRuntime
+config:
+  _target_: src.lean.types.LeanRuntimeConfig
+  lean_ws_dir: lean_ws
+  repl_binary_path: tools/lean-repl/.lake/build/bin/repl
+  backend: ${oc.env:LEAN_BACKEND,repl}
+  pool_size: ${oc.decode:${oc.env:LEAN_POOL_SIZE,1}}
+  startup_timeout_sec: 180.0
+  wall_timeout_sec: 60.0
+  max_output_chars: 20000
+  max_restarts: 3
+  memory_soft_limit_mb: 7000
+  ban_native_decide: true
+  progress_logs: ${progress_logs}

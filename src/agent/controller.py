@@ -1,16 +1,15 @@
 import asyncio
 import json
 import re
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 
-from src.agent.schemas import FinalAnswerArgs, SageFinalAnswerArgs
-from src.agent.verification import verification_passes
 from src.agent.controller_utils import (
     answer_has_explicit_failure_language,
     forced_finalization_message,
@@ -20,13 +19,20 @@ from src.agent.controller_utils import (
     plain_json_forced_finalization_message,
     plain_json_structured_output_message,
     preview_text,
-    structured_sympy_retry_message,
-    structured_output_retry_message,
     structured_final_request,
+    structured_output_retry_message,
+    structured_sympy_retry_message,
     trace_from_tool_message,
     trace_verification,
 )
-from src.tools.catalog import FINAL_ANSWER_TOOL_NAME, SAGE_EXEC_TOOL_NAME, make_submit_final_answer_tool
+from src.agent.schemas import FinalAnswerArgs, SageFinalAnswerArgs
+from src.agent.verification import verification_passes
+from src.tools.catalog import (
+    FINAL_ANSWER_TOOL_NAME,
+    SAGE_EXEC_TOOL_NAME,
+    make_submit_final_answer_tool,
+    make_submit_verdict_tool,
+)
 from src.utils.console_logging import ConsoleLogger
 from src.utils.langchain_structured_output import structured_output_kwargs
 
@@ -69,6 +75,8 @@ class AgentController:
         agent_id: str = "single_agent",
         model_name: str = "",
         system_prompt: str = "",
+        final_answer_schema: type[SageFinalAnswerArgs] = SageFinalAnswerArgs,
+        exec_tool_names: Collection[str] | None = None,
     ) -> None:
         self.config = config or ControllerConfig()
         self.logger = logger or ConsoleLogger()
@@ -77,12 +85,21 @@ class AgentController:
         self.system_prompt = system_prompt.strip()
         self._base_model = model
 
+        self.exec_tool_names = frozenset(exec_tool_names or {SAGE_EXEC_TOOL_NAME})
+        self.final_answer_schema = final_answer_schema
+
         runtime_tools = list(tools)
         self.uses_react = bool(runtime_tools)
-        if self.uses_react and not any(tool.name == SAGE_EXEC_TOOL_NAME for tool in runtime_tools):
-            raise ValueError("Tool-enabled AgentController currently requires the sage_exec tool.")
+        if self.uses_react and not any(tool.name in self.exec_tool_names for tool in runtime_tools):
+            expected = ", ".join(sorted(self.exec_tool_names))
+            raise ValueError(f"Tool-enabled AgentController requires at least one exec tool ({expected}).")
 
-        self.tools = [*runtime_tools, make_submit_final_answer_tool(SageFinalAnswerArgs)] if self.uses_react else []
+        submit_tool = (
+            make_submit_final_answer_tool(final_answer_schema)
+            if final_answer_schema is SageFinalAnswerArgs
+            else make_submit_verdict_tool(final_answer_schema)
+        )
+        self.tools = [*runtime_tools, submit_tool] if self.uses_react else []
         self.tool_by_name = {tool.name: tool for tool in self.tools}
         self.model = (
             self._bind_tool_model(model)
@@ -196,7 +213,7 @@ class AgentController:
                 metadata=trace["metadata"],
             )
 
-            if tool_name == SAGE_EXEC_TOOL_NAME and trace["ok"]:
+            if tool_name in self.exec_tool_names and trace["ok"]:
                 last_successful_sage_trace = trace
                 code_value = tool_args.get("code")
                 if isinstance(code_value, str) and code_value.strip():
@@ -395,7 +412,7 @@ class AgentController:
         parsed_payload: dict[str, Any] | None = None
         parse_error: Exception | None = None
         try:
-            payload = self._parse_final_answer_from_text(message_text(response), schema=SageFinalAnswerArgs)
+            payload = self._parse_final_answer_from_text(message_text(response), schema=self.final_answer_schema)
             parsed_payload = payload.model_dump()
         except Exception as exc:  # noqa: BLE001 - preserve the original forced-finalization failure
             parse_error = exc
@@ -436,8 +453,10 @@ class AgentController:
         parsed: Any = response.get("parsed")
 
         token_usage = self._record_token_usage(raw_message)
-        parsed_payload = parsed.model_dump() if hasattr(parsed, "model_dump") else (
-            {"parsing_error": str(parsing_error)} if parsing_error is not None else None
+        parsed_payload = (
+            parsed.model_dump()
+            if hasattr(parsed, "model_dump")
+            else ({"parsing_error": str(parsing_error)} if parsing_error is not None else None)
         )
         self.logger.log_model_call(
             agent_id=self.agent_id,
@@ -576,11 +595,7 @@ class AgentController:
             except json.JSONDecodeError as exc:
                 errors.append(f"JSONDecodeError: {exc}")
                 continue
-            if (
-                isinstance(payload, dict)
-                and issubclass(schema, SageFinalAnswerArgs)
-                and "verified_claims" not in payload
-            ):
+            if isinstance(payload, dict) and issubclass(schema, SageFinalAnswerArgs) and "verified_claims" not in payload:
                 payload = {**payload, "verified_claims": []}
             try:
                 return schema.model_validate(payload)
@@ -673,9 +688,7 @@ class AgentController:
                     status="error",
                 )
             try:
-                return asyncio.run(
-                    selected_tool.ainvoke({"type": "tool_call", "id": tool_call_id, "name": tool_name, "args": tool_args})
-                )
+                return asyncio.run(selected_tool.ainvoke({"type": "tool_call", "id": tool_call_id, "name": tool_name, "args": tool_args}))
             except Exception as async_exc:  # noqa: BLE001
                 return ToolMessage(
                     content=f"Tool error: {async_exc}",
@@ -702,7 +715,7 @@ class AgentController:
         forced: bool,
     ) -> tuple[FinalAnswerArgs | SageFinalAnswerArgs | None, str | None]:
         try:
-            payload = (SageFinalAnswerArgs if self.uses_react else FinalAnswerArgs).model_validate(tool_args)
+            payload = (self.final_answer_schema if self.uses_react else FinalAnswerArgs).model_validate(tool_args)
         except ValidationError as exc:
             return None, f"Rejected final answer. Invalid {FINAL_ANSWER_TOOL_NAME} arguments: {exc}"
 
@@ -726,7 +739,8 @@ class AgentController:
         if not final_answer.strip():
             return "Rejected final answer. The final answer must be non-empty."
         if self.uses_react and last_successful_sage_trace is None:
-            return f"Rejected final answer. Execute {SAGE_EXEC_TOOL_NAME} successfully before finalizing."
+            names = " or ".join(sorted(self.exec_tool_names))
+            return f"Rejected final answer. Execute {names} successfully before finalizing."
         if self.uses_react and self.config.require_verification_for_final:
             verification_ok, failures = verification_passes(trace_verification(last_successful_verification_trace))
             if not verification_ok:
@@ -747,15 +761,9 @@ class AgentController:
     ) -> SolveResult:
         final_payload = payload.model_dump()
         verified_claims = list(getattr(payload, "verified_claims", []) or [])
-        model_sympy_answer_raw = (
-            payload.sympy_answer
-            if isinstance(payload.sympy_answer, str)
-            else list(payload.sympy_answer)
-        )
+        model_sympy_answer_raw = payload.sympy_answer if isinstance(payload.sympy_answer, str) else list(payload.sympy_answer)
         normalized_sympy_answer = (
-            payload.sympy_answer.strip()
-            if isinstance(payload.sympy_answer, str)
-            else [item.strip() for item in payload.sympy_answer]
+            payload.sympy_answer.strip() if isinstance(payload.sympy_answer, str) else [item.strip() for item in payload.sympy_answer]
         )
         if self.uses_react:
             final_payload["verified_claims"] = verified_claims
@@ -785,7 +793,7 @@ class AgentController:
                 "system_prompt": self.system_prompt,
                 "model_name": self.model_name,
                 "controller_config": asdict(self.config),
-                "structured_output_schema": (SageFinalAnswerArgs if self.uses_react else FinalAnswerArgs).model_json_schema(),
+                "structured_output_schema": (self.final_answer_schema if self.uses_react else FinalAnswerArgs).model_json_schema(),
                 "tool_specs": [{"name": tool.name} for tool in self.tools],
             }
         )

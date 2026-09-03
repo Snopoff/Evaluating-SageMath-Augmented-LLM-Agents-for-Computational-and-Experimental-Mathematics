@@ -467,9 +467,20 @@ class AgentControllerTests(unittest.TestCase):
         self.assertEqual(len(result.tool_traces), 1)
         self.assertEqual(result.tool_traces[0]["ok"], True)
 
-    def test_non_empty_tool_list_requires_sage_exec(self) -> None:
-        with self.assertRaisesRegex(ValueError, "requires the sage_exec tool"):
+    def test_non_empty_tool_list_requires_an_exec_tool(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires at least one exec tool"):
             AgentController(model=_FakeModel(), tools=[_make_non_sage_tool()])
+
+    def test_exec_tool_names_can_be_overridden(self) -> None:
+        """A Lean-only agent supplies its own exec tool name instead of sage_exec."""
+        other = _make_non_sage_tool()
+        controller = AgentController(
+            model=_FakeModel(),
+            tools=[other],
+            exec_tool_names={other.name},
+        )
+        self.assertTrue(controller.uses_react)
+        self.assertIn(other.name, controller.exec_tool_names)
 
     def test_rejects_multiple_tool_calls_in_one_turn(self) -> None:
         calls: list[dict[str, Any]] = []

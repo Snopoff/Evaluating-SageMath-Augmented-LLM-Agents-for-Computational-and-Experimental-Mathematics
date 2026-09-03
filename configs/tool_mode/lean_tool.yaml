@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - /system_prompt: lean
+  - /lean_skill: v1
+  - _self_
+tools:
+  - lean_exec

@@ -10,7 +10,11 @@ from omegaconf import DictConfig
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
-from src.tools.catalog import AVAILABLE_TOOLS, SAGE_EXEC_TOOL_NAME  # noqa: E402
+from src.tools.catalog import (  # noqa: E402
+    AVAILABLE_TOOLS,
+    LEAN_EXEC_TOOL_NAME,
+    SAGE_EXEC_TOOL_NAME,
+)
 from src.tools.context7 import CONTEXT7_TOOL_NAMES, load_context7_tools  # noqa: E402
 from src.utils.config_helpers import resolve_prompt, resolve_text_asset  # noqa: E402
 
@@ -46,6 +50,11 @@ def main(cfg: DictConfig) -> None:
     tool_names = list(tool_names)
 
     sage_runtime = hu.instantiate(cfg.sage, logger=logger) if SAGE_EXEC_TOOL_NAME in tool_names else None
+    lean_runtime = (
+        hu.instantiate(cfg.lean, logger=logger)
+        if LEAN_EXEC_TOOL_NAME in tool_names and cfg.get("lean") is not None
+        else None
+    )
     context7_tool_names = [name for name in tool_names if name in CONTEXT7_TOOL_NAMES]
     context7_client = hu.instantiate(cfg.context7) if context7_tool_names else None
     context7_tool_by_name = {}
@@ -53,8 +62,12 @@ def main(cfg: DictConfig) -> None:
         context7_tool_by_name = load_context7_tools(context7_client)
 
     sage_usage_notes = ""
-    if "sage_exec" in tool_names and cfg.get("sage_skill") is not None:
+    if SAGE_EXEC_TOOL_NAME in tool_names and cfg.get("sage_skill") is not None:
         sage_usage_notes = resolve_text_asset(cfg.sage_skill, label="sage_skill", logger=logger)
+
+    lean_usage_notes = ""
+    if LEAN_EXEC_TOOL_NAME in tool_names and cfg.get("lean_skill") is not None:
+        lean_usage_notes = resolve_text_asset(cfg.lean_skill, label="lean_skill", logger=logger)
 
     system_prompt = ""
     if cfg.get("system_prompt") is not None:
@@ -80,6 +93,15 @@ def main(cfg: DictConfig) -> None:
             if sage_runtime is None:
                 raise RuntimeError(f"Tool runtime was not initialized for tool {tool_name!r}.")
             tools.append(factory(sage_runtime, sage_usage_notes))
+            continue
+
+        if tool_name == LEAN_EXEC_TOOL_NAME:
+            if lean_runtime is None:
+                raise RuntimeError(
+                    f"Tool runtime was not initialized for tool {tool_name!r}. "
+                    "Add `lean: default` to the config defaults."
+                )
+            tools.append(factory(lean_runtime, lean_usage_notes))
             continue
 
         raise ValueError(f"Tool wiring is missing for {tool_name!r}.")

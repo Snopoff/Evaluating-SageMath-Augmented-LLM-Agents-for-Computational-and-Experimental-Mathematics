@@ -52,3 +52,7 @@ notes/
 # Paper
 eacl/
 paper/
+# Lean workspace
+lean_ws/.lake/
+lean_ws/_scratch/
+tools/lean-repl/

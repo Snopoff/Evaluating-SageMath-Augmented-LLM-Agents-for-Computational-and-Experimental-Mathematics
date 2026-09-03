@@ -69,3 +69,77 @@ class SageFinalAnswerArgs(FinalAnswerArgs):
     verified_claims: list[str] = Field(
         description="Short list of final claims supported by successful Sage output or explicit reasoning.",
     )
+
+
+class LeanExecArgs(BaseModel):
+    """Arguments for elaborating a Lean 4 snippet against Mathlib."""
+
+    code: str = Field(
+        min_length=1,
+        description=(
+            "Self-contained Lean 4 code to elaborate against Mathlib. Do not write "
+            "`import` lines: Mathlib is already imported. Each call is stateless, so "
+            "every declaration you rely on must be defined in this same snippet."
+        ),
+    )
+    decl_name: str = Field(
+        default="",
+        description=(
+            "Name of the theorem this snippet is meant to establish. Required for a "
+            "proof to count: its axioms are checked with `#print axioms`. Leaving it "
+            "empty means the snippet can never be reported as proved."
+        ),
+    )
+
+
+class LeanFinalAnswerArgs(SageFinalAnswerArgs):
+    """Verdict schema for the Lean verification agent.
+
+    Subclasses the Sage schema on purpose so the controller's finalization,
+    retry and forced-finalization paths keep working unchanged. The inherited
+    fields are reused rather than duplicated:
+
+    - ``final_answer`` carries the verdict string,
+    - ``sympy_answer`` carries the candidate expression that was adjudicated,
+      which keeps results joinable against the Sage-stage records.
+    """
+
+    verdict: str = Field(
+        description=(
+            "PROVED if Lean established the candidate, REFUTED if Lean established "
+            "its negation or exhibited a counterexample, UNKNOWN otherwise."
+        ),
+    )
+    lean_statement: str = Field(
+        default="",
+        description="The Lean 4 statement of the candidate, as elaborated (may end in `sorry`).",
+    )
+    lean_proof: str = Field(
+        default="",
+        description="The full Lean 4 snippet that produced the verdict, if any.",
+    )
+    failure_kind: str = Field(
+        default="",
+        description=(
+            "Why the verdict is UNKNOWN: 'missing-concept' when Mathlib lacks the "
+            "definitions, 'elab-error', 'timeout', or 'proof-search'. Empty otherwise."
+        ),
+    )
+
+    @field_validator("verdict")
+    @classmethod
+    def validate_verdict(cls, value: str) -> str:
+        allowed = {"PROVED", "REFUTED", "UNKNOWN"}
+        normalized = value.strip().upper()
+        if normalized not in allowed:
+            raise ValueError(f"verdict must be one of {sorted(allowed)}, got {value!r}")
+        return normalized
+
+    @field_validator("failure_kind")
+    @classmethod
+    def validate_failure_kind(cls, value: str) -> str:
+        allowed = {"", "missing-concept", "elab-error", "timeout", "proof-search"}
+        normalized = value.strip()
+        if normalized not in allowed:
+            raise ValueError(f"failure_kind must be one of {sorted(allowed)}, got {value!r}")
+        return normalized
