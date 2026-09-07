@@ -1,0 +1,27 @@
+defaults:
+  - model: openrouter
+  - controller: default
+  - lean: default
+  - logger: console
+  - _self_
+  - tool_mode: lean_tool
+
+model_name: anthropic/claude-opus-4.5
+mode: lean_verification
+progress_logs: true
+
+lean_verification:
+  # Track B (and A): candidate adjudication. Switch to lean_claims_audit.json for track C.
+  tasks_path: data/processed/lean_discrimination.json
+  output_dir: outputs/lean_verification
+  run_name: discrimination
+  limit: -1
+  start_with: 0
+  # LLM latency dominates; a single Lean worker serves these threads comfortably.
+  max_workers: 4
+  resume: true
+
+controller:
+  config:
+    max_steps: 12
+    num_finalization_retries: 2

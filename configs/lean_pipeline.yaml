@@ -1,0 +1,10 @@
+defaults:
+  - lean_verification
+  - _self_
+
+lean_verification:
+  protocol: sage-lean-v1
+  tasks_path: data/processed/lean_pipeline.json
+  run_name: pipeline_explanation
+  context: explanation
+  dry_run: false

@@ -6,6 +6,10 @@ small: Hydra configs select the model, prompt, logger, controller, and tools;
 `AgentController` drives the interaction loop; and Sage code is executed in a
 Docker-backed runtime.
 
+The optional [Sage-to-Lean experiment](docs/lean_pipeline.md) attempts to prove
+saved Sage-agent answers, independently rechecks final certificates, and compares
+proof acceptance against held-out judge labels.
+
 ## Repository Layout
 
 - `main.py`: Hydra entry point for chat, prediction generation, and benchmark modes.

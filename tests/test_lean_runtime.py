@@ -20,6 +20,25 @@ from src.lean.runtime import (
     scan_for_native_decide,
 )
 from src.lean.types import LeanRuntimeConfig
+from src.benchmark.lean_pipeline import verify_certificate
+
+
+@pytest.mark.parametrize("verdict,code,expected", [
+    ("PROVED", "def candidate_claim : Prop := ∀ n : Nat, n + 0 = n\n"
+     "theorem candidate_certificate : candidate_claim := by intro n; rfl", True),
+    ("REFUTED", "def candidate_claim : Prop := 1 + 1 = (3 : Nat)\n"
+     "theorem candidate_certificate : ¬ candidate_claim := by norm_num [candidate_claim]", True),
+    ("PROVED", "def candidate_claim : Prop := 1 + 1 = (3 : Nat)\n"
+     "theorem candidate_certificate : 1 + 1 = (2 : Nat) := by norm_num", False),
+    ("PROVED", "def candidate_claim : Prop := 1 + 1 = (3 : Nat)\n"
+     "theorem candidate_certificate : candidate_claim := by sorry", False),
+    ("PROVED", "def candidate_claim : Prop := 1 + 1 = (3 : Nat)\n"
+     "axiom invented : candidate_claim\n"
+     "theorem candidate_certificate : candidate_claim := invented", False),
+])
+def test_pipeline_final_certificate(runtime, verdict, code, expected):
+    result = verify_certificate(runtime, {"verdict": verdict, "lean_proof": code})
+    assert result["proved"] is expected, result
 
 
 @pytest.fixture(scope="module")

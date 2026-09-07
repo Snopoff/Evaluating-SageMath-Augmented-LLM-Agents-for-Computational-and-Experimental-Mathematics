@@ -35,6 +35,9 @@ data/*
 drafts/
 scripts/*
 !scripts/paper_revision_analysis.py
+!scripts/build_lean_tasks.py
+!scripts/run_lean_verification.py
+!scripts/analyze_lean_results.py
 reports/
 tmp/
 notes/
